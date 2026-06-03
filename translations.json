@@ -1,0 +1,27 @@
+{
+  "_instructions": "Add any language here. Copy the English block below as a template, replace the values, and the app will pick it up automatically on next launch. The key name (e.g. 'Français') is what appears in the Language dropdown.",
+
+  "Français": {
+    "window_title":    "Constructeur de corpus Spotify",
+    "files_frame":     "Fichiers",
+    "language_label":  "Langue :",
+    "csv_label":       "Charger un fichier CSV :",
+    "save_label":      "Enregistrer dans :",
+    "browse_btn":      "Parcourir...",
+    "tracks_frame":    "Pistes",
+    "search_label":    "Rechercher :",
+    "no_csv_msg":      "Aucun CSV chargé",
+    "status_loaded":   "{n} pistes chargées",
+    "status_filtered": "{n} sur {m} pistes",
+    "settings_frame":  "Paramètres",
+    "dl_length_label": "Durée de téléchargement (secondes) :",
+    "offset_label":    "Début de la coupe (secondes) :",
+    "duration_label":  "Longueur de la coupe (secondes) :",
+    "explain_text":    "Le découpage prend chaque aperçu téléchargé et en extrait une courte section.\nDécalage = où commence la coupe.  Longueur = durée de chaque grain.",
+    "step1_check":     "Étape 1 - Télécharger les aperçus depuis YouTube",
+    "step2_check":     "Étape 2 - Découper en grains",
+    "log_frame":       "Journal",
+    "start_btn":       "Démarrer",
+    "stop_btn":        "Arrêter"
+  }
+}
