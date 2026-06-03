@@ -196,6 +196,7 @@ def run_slice(previews_dir: str, grains_dir: str, offset: float, duration: float
 TRANSLATIONS = {
     "English": {
         "window_title": "Spotify Corpus Builder",
+        "app_description": "Load a Spotify CSV, download audio previews from YouTube, and slice them into short grains for use as a sample corpus.",
         "files_section": "FILES", "language_label": "Language",
         "theme_label": "Theme", "csv_label": "Load CSV File",
         "save_label": "Save To", "browse_btn": "Browse",
@@ -217,6 +218,7 @@ TRANSLATIONS = {
     },
     "Espanol": {
         "window_title": "Constructor de Corpus de Spotify",
+        "app_description": "Carga un CSV de Spotify, descarga vistas previas de audio de YouTube y cortalas en granos cortos para usar como corpus de muestras.",
         "files_section": "ARCHIVOS", "language_label": "Idioma",
         "theme_label": "Tema", "csv_label": "Cargar archivo CSV",
         "save_label": "Guardar en", "browse_btn": "Explorar",
@@ -238,6 +240,7 @@ TRANSLATIONS = {
     },
     "Deutsch": {
         "window_title": "Spotify Corpus Builder",
+        "app_description": "Lade eine Spotify-CSV, lade Audio-Vorschauen von YouTube herunter und schneide sie in kurze Korner fur einen Sample-Corpus.",
         "files_section": "DATEIEN", "language_label": "Sprache",
         "theme_label": "Design", "csv_label": "CSV-Datei laden",
         "save_label": "Speichern unter", "browse_btn": "Durchsuchen",
@@ -259,6 +262,7 @@ TRANSLATIONS = {
     },
     "Chinese": {
         "window_title": "Spotify 语料库构建器",
+        "app_description": "加载 Spotify CSV，从 YouTube 下载音频预览，并将其切割成短片段，用作采样语料库。",
         "files_section": "文件", "language_label": "语言",
         "theme_label": "主题", "csv_label": "加载 CSV 文件",
         "save_label": "保存到", "browse_btn": "浏览",
@@ -280,6 +284,7 @@ TRANSLATIONS = {
     },
     "Japanese": {
         "window_title": "Spotify コーパスビルダー",
+        "app_description": "Spotify の CSV を読み込み、YouTube から音声プレビューをダウンロードし、サンプルコーパス用の短いグレインにスライスします。",
         "files_section": "ファイル", "language_label": "言語",
         "theme_label": "テーマ", "csv_label": "CSV ファイルを読み込む",
         "save_label": "保存先", "browse_btn": "参照",
@@ -469,16 +474,29 @@ class CorpusBuilderUI:
         self.root.grid_rowconfigure(2, weight=1)  # track list expands
 
         # ── Header bar ────────────────────────────────────────────────────
-        header = ctk.CTkFrame(self.root, corner_radius=0, height=48)
+        header = ctk.CTkFrame(self.root, corner_radius=0, height=68)
         header.grid(row=0, column=0, sticky="ew", padx=0, pady=0)
         header.grid_columnconfigure(1, weight=1)
         header.grid_propagate(False)
 
+        title_block = ctk.CTkFrame(header, fg_color="transparent")
+        title_block.grid(row=0, column=0, padx=16, pady=6, sticky="w")
+
         ctk.CTkLabel(
-            header,
+            title_block,
             text="Spotify Corpus Builder",
             font=ctk.CTkFont(size=16, weight="bold"),
-        ).grid(row=0, column=0, padx=16, pady=8, sticky="w")
+        ).pack(anchor="w")
+
+        self._desc_label = ctk.CTkLabel(
+            title_block,
+            text=T["app_description"],
+            font=ctk.CTkFont(size=11),
+            text_color=("gray50", "gray55"),
+            wraplength=480,
+            justify="left",
+        )
+        self._desc_label.pack(anchor="w")
 
         controls_right = ctk.CTkFrame(header, fg_color="transparent")
         controls_right.grid(row=0, column=2, padx=12, pady=4, sticky="e")
@@ -783,6 +801,7 @@ class CorpusBuilderUI:
         self._step2_chk.configure(text=T["step2_check"])
         self._start_btn.configure(text=T["start_btn"])
         self._stop_btn.configure(text=T["stop_btn"])
+        self._desc_label.configure(text=T["app_description"])
 
         n = len(self._all_tracks)
         self._count_label.configure(
