@@ -438,149 +438,143 @@ class CorpusBuilderUI:
 
     def _build_ui(self):
         ctk = self.ctk
-        tk  = ctk  # alias for StringVar/BooleanVar
-
         import tkinter as _tk
         T = self._T()
 
         self.root.grid_columnconfigure(0, weight=1)
-        self.root.grid_rowconfigure(2, weight=1)  # track list expands
+        # row 4 = tracks frame — the only row that expands vertically
+        self.root.grid_rowconfigure(4, weight=1)
 
-        # ── Header bar ────────────────────────────────────────────────────
-        header = ctk.CTkFrame(self.root, corner_radius=0, height=68)
-        header.grid(row=0, column=0, sticky="ew", padx=0, pady=0)
+        # ── Header ────────────────────────────────────────────────────────
+        # row 0
+        header = ctk.CTkFrame(self.root, corner_radius=0, height=76)
+        header.grid(row=0, column=0, sticky="ew")
         header.grid_columnconfigure(1, weight=1)
         header.grid_propagate(False)
 
         title_block = ctk.CTkFrame(header, fg_color="transparent")
-        title_block.grid(row=0, column=0, padx=16, pady=6, sticky="w")
+        title_block.grid(row=0, column=0, padx=20, pady=10, sticky="w")
 
         ctk.CTkLabel(
             title_block,
             text="Spotify Corpus Builder",
-            font=ctk.CTkFont(size=16, weight="bold"),
+            font=ctk.CTkFont(size=20, weight="bold"),
         ).pack(anchor="w")
 
         self._desc_label = ctk.CTkLabel(
             title_block,
             text=T["app_description"],
-            font=ctk.CTkFont(size=11),
-            text_color=("gray50", "gray55"),
-            wraplength=480,
+            font=ctk.CTkFont(size=12),
+            text_color=("gray45", "gray50"),
+            wraplength=420,
             justify="left",
         )
-        self._desc_label.pack(anchor="w")
+        self._desc_label.pack(anchor="w", pady=(2, 0))
 
-        controls_right = ctk.CTkFrame(header, fg_color="transparent")
-        controls_right.grid(row=0, column=2, padx=12, pady=4, sticky="e")
+        lang_block = ctk.CTkFrame(header, fg_color="transparent")
+        lang_block.grid(row=0, column=2, padx=20, pady=10, sticky="e")
 
-        # Language selector
-        self._lang_label = ctk.CTkLabel(controls_right, text=T["language_label"],
-                                        font=ctk.CTkFont(size=11))
-        self._lang_label.pack(side="left", padx=(0, 4))
+        self._lang_label = ctk.CTkLabel(lang_block, text=T["language_label"],
+                                        font=ctk.CTkFont(size=12))
+        self._lang_label.pack(side="left", padx=(0, 6))
 
         self._lang_var = _tk.StringVar(value=self._lang)
-        lang_combo = ctk.CTkComboBox(
-            controls_right,
+        ctk.CTkComboBox(
+            lang_block,
             variable=self._lang_var,
             values=list(TRANSLATIONS.keys()),
-            width=120,
+            width=130,
+            height=32,
             command=self._on_lang_change,
-        )
-        lang_combo.pack(side="left")
+        ).pack(side="left")
 
-        # ── Files section ─────────────────────────────────────────────────
+        # ── FILES label — row 1 ───────────────────────────────────────────
         self._files_label = ctk.CTkLabel(
             self.root, text=T["files_section"],
-            font=ctk.CTkFont(size=11, weight="bold"),
-            text_color=("gray50", "gray60"),
+            font=ctk.CTkFont(size=12, weight="bold"),
+            text_color=("gray40", "gray55"),
         )
-        self._files_label.grid(row=1, column=0, sticky="w", padx=18, pady=(14, 2))
+        self._files_label.grid(row=1, column=0, sticky="w", padx=20, pady=(16, 4))
 
-        files_frame = ctk.CTkFrame(self.root, corner_radius=8)
-        files_frame.grid(row=1, column=0, sticky="ew", padx=12, pady=(0, 4),
-                         ipadx=4, ipady=4)
+        # ── FILES frame — row 2 ───────────────────────────────────────────
+        files_frame = ctk.CTkFrame(self.root, corner_radius=10)
+        files_frame.grid(row=2, column=0, sticky="ew", padx=14, pady=(0, 6))
         files_frame.grid_columnconfigure(1, weight=1)
-        files_frame.grid_rowconfigure(0, minsize=4)
 
-        # CSV row
         self._csv_lbl = ctk.CTkLabel(files_frame, text=T["csv_label"],
-                                     font=ctk.CTkFont(size=12))
-        self._csv_lbl.grid(row=1, column=0, padx=(14, 8), pady=6, sticky="w")
+                                     font=ctk.CTkFont(size=13), width=110, anchor="w")
+        self._csv_lbl.grid(row=0, column=0, padx=(16, 10), pady=(14, 4), sticky="w")
 
         self._csv_var = _tk.StringVar()
         ctk.CTkEntry(files_frame, textvariable=self._csv_var, state="readonly",
-                     height=32).grid(row=1, column=1, padx=4, pady=6, sticky="ew")
+                     height=34, font=ctk.CTkFont(size=12)
+                     ).grid(row=0, column=1, padx=4, pady=(14, 4), sticky="ew")
 
         self._csv_browse_btn = ctk.CTkButton(
-            files_frame, text=T["browse_btn"], width=90, height=32,
-            command=self._browse_csv)
-        self._csv_browse_btn.grid(row=1, column=2, padx=(4, 14), pady=6)
+            files_frame, text=T["browse_btn"], width=96, height=34,
+            font=ctk.CTkFont(size=12), command=self._browse_csv)
+        self._csv_browse_btn.grid(row=0, column=2, padx=(4, 16), pady=(14, 4))
 
-        # CSV format hint
         self._csv_hint_lbl = ctk.CTkLabel(
-            files_frame,
-            text=T["csv_hint"],
-            font=ctk.CTkFont(size=10),
-            text_color=("gray50", "gray55"),
-            justify="left",
-            anchor="w",
+            files_frame, text=T["csv_hint"],
+            font=ctk.CTkFont(size=11),
+            text_color=("gray45", "gray50"),
+            justify="left", anchor="w",
         )
-        self._csv_hint_lbl.grid(row=2, column=0, columnspan=3,
-                                padx=(14, 14), pady=(0, 6), sticky="w")
+        self._csv_hint_lbl.grid(row=1, column=0, columnspan=3,
+                                padx=16, pady=(0, 10), sticky="w")
 
-        # Output row
         self._save_lbl = ctk.CTkLabel(files_frame, text=T["save_label"],
-                                      font=ctk.CTkFont(size=12))
-        self._save_lbl.grid(row=3, column=0, padx=(14, 8), pady=6, sticky="w")
+                                      font=ctk.CTkFont(size=13), width=110, anchor="w")
+        self._save_lbl.grid(row=2, column=0, padx=(16, 10), pady=(4, 14), sticky="w")
 
         self._out_var = _tk.StringVar(value=os.path.join(SCRIPT_DIR, "output"))
         ctk.CTkEntry(files_frame, textvariable=self._out_var,
-                     height=32).grid(row=3, column=1, padx=4, pady=6, sticky="ew")
+                     height=34, font=ctk.CTkFont(size=12)
+                     ).grid(row=2, column=1, padx=4, pady=(4, 14), sticky="ew")
 
         self._out_browse_btn = ctk.CTkButton(
-            files_frame, text=T["browse_btn"], width=90, height=32,
-            command=self._browse_output)
-        self._out_browse_btn.grid(row=3, column=2, padx=(4, 14), pady=6)
+            files_frame, text=T["browse_btn"], width=96, height=34,
+            font=ctk.CTkFont(size=12), command=self._browse_output)
+        self._out_browse_btn.grid(row=2, column=2, padx=(4, 16), pady=(4, 14))
 
-        # ── Tracks section ────────────────────────────────────────────────
+        # ── TRACKS label — row 3 ──────────────────────────────────────────
         self._tracks_label = ctk.CTkLabel(
             self.root, text=T["tracks_section"],
-            font=ctk.CTkFont(size=11, weight="bold"),
-            text_color=("gray50", "gray60"),
+            font=ctk.CTkFont(size=12, weight="bold"),
+            text_color=("gray40", "gray55"),
         )
-        self._tracks_label.grid(row=2, column=0, sticky="nw", padx=18, pady=(10, 2))
+        self._tracks_label.grid(row=3, column=0, sticky="w", padx=20, pady=(6, 4))
 
-        tracks_outer = ctk.CTkFrame(self.root, corner_radius=8)
-        tracks_outer.grid(row=2, column=0, sticky="nsew", padx=12, pady=(20, 4))
+        # ── TRACKS frame — row 4 (expands) ────────────────────────────────
+        tracks_outer = ctk.CTkFrame(self.root, corner_radius=10)
+        tracks_outer.grid(row=4, column=0, sticky="nsew", padx=14, pady=(0, 6))
         tracks_outer.grid_columnconfigure(0, weight=1)
         tracks_outer.grid_rowconfigure(1, weight=1)
 
-        # Search bar
         search_row = ctk.CTkFrame(tracks_outer, fg_color="transparent")
-        search_row.grid(row=0, column=0, sticky="ew", padx=10, pady=(10, 4))
+        search_row.grid(row=0, column=0, sticky="ew", padx=12, pady=(12, 6))
         search_row.grid_columnconfigure(0, weight=1)
 
         self._search_var = _tk.StringVar()
         self._search_var.trace_add("write", self._on_search)
-        search_entry = ctk.CTkEntry(
+        ctk.CTkEntry(
             search_row,
             textvariable=self._search_var,
             placeholder_text=T["search_placeholder"],
-            height=34,
-        )
-        search_entry.grid(row=0, column=0, sticky="ew", padx=(0, 10))
+            height=36,
+            font=ctk.CTkFont(size=13),
+        ).grid(row=0, column=0, sticky="ew", padx=(0, 12))
 
         self._count_label = ctk.CTkLabel(
             search_row, text=T["no_csv_msg"],
-            font=ctk.CTkFont(size=11),
-            text_color=("gray50", "gray55"),
+            font=ctk.CTkFont(size=12),
+            text_color=("gray45", "gray50"),
         )
         self._count_label.grid(row=0, column=1, sticky="e")
 
-        # Treeview (ttk, styled to match CTk)
         tree_frame = ctk.CTkFrame(tracks_outer, fg_color="transparent")
-        tree_frame.grid(row=1, column=0, sticky="nsew", padx=10, pady=(0, 10))
+        tree_frame.grid(row=1, column=0, sticky="nsew", padx=12, pady=(0, 12))
         tree_frame.grid_columnconfigure(0, weight=1)
         tree_frame.grid_rowconfigure(0, weight=1)
 
@@ -591,8 +585,8 @@ class CorpusBuilderUI:
             show="headings", height=10, style="Corpus.Treeview")
         self._tree.heading("artist", text="Artist")
         self._tree.heading("track",  text="Track")
-        self._tree.column("artist", width=240, minwidth=100)
-        self._tree.column("track",  width=340, minwidth=100)
+        self._tree.column("artist", width=250, minwidth=100)
+        self._tree.column("track",  width=350, minwidth=100)
 
         vsb = self._ttk.Scrollbar(tree_frame, orient="vertical",   command=self._tree.yview)
         hsb = self._ttk.Scrollbar(tree_frame, orient="horizontal", command=self._tree.xview)
@@ -601,17 +595,17 @@ class CorpusBuilderUI:
         vsb.grid(row=0, column=1, sticky="ns")
         hsb.grid(row=1, column=0, sticky="ew")
 
-        # ── Settings section ──────────────────────────────────────────────
+        # ── SETTINGS label — row 5 ────────────────────────────────────────
         self._settings_label = ctk.CTkLabel(
             self.root, text=T["settings_section"],
-            font=ctk.CTkFont(size=11, weight="bold"),
-            text_color=("gray50", "gray60"),
+            font=ctk.CTkFont(size=12, weight="bold"),
+            text_color=("gray40", "gray55"),
         )
-        self._settings_label.grid(row=3, column=0, sticky="w", padx=18, pady=(10, 2))
+        self._settings_label.grid(row=5, column=0, sticky="w", padx=20, pady=(6, 4))
 
-        settings_frame = ctk.CTkFrame(self.root, corner_radius=8)
-        settings_frame.grid(row=3, column=0, sticky="ew", padx=12, pady=(0, 4),
-                            ipadx=4, ipady=4)
+        # ── SETTINGS frame — row 6 ────────────────────────────────────────
+        settings_frame = ctk.CTkFrame(self.root, corner_radius=10)
+        settings_frame.grid(row=6, column=0, sticky="ew", padx=14, pady=(0, 6))
 
         import tkinter as _tk2
         self._prev_len_var = _tk2.StringVar(value="30")
@@ -621,83 +615,84 @@ class CorpusBuilderUI:
         self._do_slice     = _tk2.BooleanVar(value=True)
 
         params_row = ctk.CTkFrame(settings_frame, fg_color="transparent")
-        params_row.pack(fill="x", padx=12, pady=(10, 4))
+        params_row.pack(fill="x", padx=16, pady=(14, 6))
 
-        def _param(parent, label_key, var, width=70):
+        def _param(parent, label_key, var, width=76):
             f = ctk.CTkFrame(parent, fg_color="transparent")
-            lbl = ctk.CTkLabel(f, text=T[label_key], font=ctk.CTkFont(size=11))
+            lbl = ctk.CTkLabel(f, text=T[label_key], font=ctk.CTkFont(size=12))
             lbl.pack(anchor="w")
-            entry = ctk.CTkEntry(f, textvariable=var, width=width, height=30,
-                                 justify="center")
-            entry.pack()
+            entry = ctk.CTkEntry(f, textvariable=var, width=width, height=32,
+                                 font=ctk.CTkFont(size=13), justify="center")
+            entry.pack(pady=(4, 0))
             return f, lbl
 
-        f1, self._dl_lbl    = _param(params_row, "dl_length_label", self._prev_len_var)
-        f2, self._off_lbl   = _param(params_row, "offset_label",    self._offset_var)
-        f3, self._dur_lbl   = _param(params_row, "duration_label",  self._duration_var)
+        f1, self._dl_lbl  = _param(params_row, "dl_length_label", self._prev_len_var)
+        f2, self._off_lbl = _param(params_row, "offset_label",    self._offset_var)
+        f3, self._dur_lbl = _param(params_row, "duration_label",  self._duration_var)
         for f in (f1, f2, f3):
-            f.pack(side="left", padx=(0, 24))
+            f.pack(side="left", padx=(0, 28))
 
         self._explain_lbl = ctk.CTkLabel(
             settings_frame,
             text=T["explain_text"],
-            font=ctk.CTkFont(size=10),
-            text_color=("gray55", "gray55"),
+            font=ctk.CTkFont(size=11),
+            text_color=("gray45", "gray50"),
             justify="left",
             anchor="w",
         )
-        self._explain_lbl.pack(fill="x", padx=14, pady=(2, 6))
+        self._explain_lbl.pack(fill="x", padx=16, pady=(4, 8))
 
         steps_row = ctk.CTkFrame(settings_frame, fg_color="transparent")
-        steps_row.pack(fill="x", padx=12, pady=(0, 10))
+        steps_row.pack(fill="x", padx=16, pady=(0, 14))
 
         self._step1_chk = ctk.CTkCheckBox(
             steps_row, text=T["step1_check"],
-            variable=self._do_download, font=ctk.CTkFont(size=12))
-        self._step1_chk.pack(side="left", padx=(0, 24))
+            variable=self._do_download, font=ctk.CTkFont(size=13))
+        self._step1_chk.pack(side="left", padx=(0, 28))
 
         self._step2_chk = ctk.CTkCheckBox(
             steps_row, text=T["step2_check"],
-            variable=self._do_slice, font=ctk.CTkFont(size=12))
+            variable=self._do_slice, font=ctk.CTkFont(size=13))
         self._step2_chk.pack(side="left")
 
-        # ── Action bar ────────────────────────────────────────────────────
+        # ── Action bar — row 7 ────────────────────────────────────────────
         action_bar = ctk.CTkFrame(self.root, fg_color="transparent")
-        action_bar.grid(row=4, column=0, sticky="ew", padx=12, pady=(4, 4))
+        action_bar.grid(row=7, column=0, sticky="ew", padx=14, pady=(4, 6))
         action_bar.grid_columnconfigure(2, weight=1)
 
         self._start_btn = ctk.CTkButton(
-            action_bar, text=T["start_btn"], width=100, height=36,
+            action_bar, text=T["start_btn"], width=110, height=40,
             command=self._start, state="disabled",
-            font=ctk.CTkFont(size=13, weight="bold"))
-        self._start_btn.grid(row=0, column=0, padx=(0, 8))
+            font=ctk.CTkFont(size=14, weight="bold"))
+        self._start_btn.grid(row=0, column=0, padx=(0, 10))
 
         self._stop_btn = ctk.CTkButton(
-            action_bar, text=T["stop_btn"], width=100, height=36,
+            action_bar, text=T["stop_btn"], width=110, height=40,
             command=self._stop, state="disabled",
             fg_color=("gray70", "gray30"), hover_color=("gray60", "gray40"),
-            font=ctk.CTkFont(size=13))
+            font=ctk.CTkFont(size=14))
         self._stop_btn.grid(row=0, column=1)
 
-        self._progress = ctk.CTkProgressBar(action_bar, mode="indeterminate", height=8)
-        self._progress.grid(row=0, column=2, sticky="ew", padx=(16, 0))
+        self._progress = ctk.CTkProgressBar(action_bar, mode="indeterminate", height=10)
+        self._progress.grid(row=0, column=2, sticky="ew", padx=(18, 0))
         self._progress.set(0)
 
-        # ── Log section ───────────────────────────────────────────────────
+        # ── LOG label — row 8 ─────────────────────────────────────────────
         self._log_label = ctk.CTkLabel(
             self.root, text=T["log_section"],
-            font=ctk.CTkFont(size=11, weight="bold"),
-            text_color=("gray50", "gray60"),
+            font=ctk.CTkFont(size=12, weight="bold"),
+            text_color=("gray40", "gray55"),
         )
-        self._log_label.grid(row=5, column=0, sticky="w", padx=18, pady=(6, 2))
+        self._log_label.grid(row=8, column=0, sticky="w", padx=20, pady=(4, 4))
 
-        log_frame = ctk.CTkFrame(self.root, corner_radius=8)
-        log_frame.grid(row=5, column=0, sticky="ew", padx=12, pady=(0, 12))
+        # ── LOG frame — row 9 ─────────────────────────────────────────────
+        log_frame = ctk.CTkFrame(self.root, corner_radius=10)
+        log_frame.grid(row=9, column=0, sticky="ew", padx=14, pady=(0, 14))
 
         self._log_area = ctk.CTkTextbox(
             log_frame, height=160, state="disabled",
-            font=ctk.CTkFont(family="Courier", size=11), wrap="none")
-        self._log_area.pack(fill="both", expand=True, padx=4, pady=4)
+            font=ctk.CTkFont(family="Courier", size=12), wrap="none")
+        self._log_area.pack(fill="both", expand=True, padx=6, pady=6)
 
     def _style_treeview(self):
         """Style the ttk Treeview to match the current CTk theme."""
