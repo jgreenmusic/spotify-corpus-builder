@@ -215,6 +215,11 @@ TRANSLATIONS = {
         ),
         "step1_check": "Step 1 — Download previews from YouTube",
         "step2_check": "Step 2 — Slice into grains",
+        "youtube_note": (
+            "Note: This app does not use the Spotify API or download official Spotify audio. "
+            "It searches YouTube by artist and track name and downloads the first N seconds of the result. "
+            "Most tracks will match correctly, but some may return a live recording, cover, or alternate version instead of the studio track."
+        ),
         "start_btn": "Start", "stop_btn": "Stop",
         "log_section": "LOG",
     },
@@ -239,6 +244,11 @@ TRANSLATIONS = {
         ),
         "step1_check": "Paso 1 - Descargar vistas previas de YouTube",
         "step2_check": "Paso 2 - Cortar en granos",
+        "youtube_note": (
+            "Nota: Esta app no usa la API de Spotify ni descarga audio oficial de Spotify. "
+            "Busca en YouTube por artista y titulo, y descarga los primeros N segundos del resultado. "
+            "La mayoria de pistas coinciden correctamente, pero algunas pueden devolver una version en vivo, cover o alternativa en lugar del estudio."
+        ),
         "start_btn": "Iniciar", "stop_btn": "Detener",
         "log_section": "REGISTRO",
     },
@@ -263,6 +273,11 @@ TRANSLATIONS = {
         ),
         "step1_check": "Schritt 1 - Vorschauen von YouTube herunterladen",
         "step2_check": "Schritt 2 - In Korner schneiden",
+        "youtube_note": (
+            "Hinweis: Diese App verwendet nicht die Spotify-API und ladt kein offizielles Spotify-Audio herunter. "
+            "Sie sucht auf YouTube nach Kunstler und Titel und ladt die ersten N Sekunden herunter. "
+            "Die meisten Titel werden korrekt gefunden, aber einige konnen eine Live-Version, ein Cover oder eine alternative Version ergeben."
+        ),
         "start_btn": "Start", "stop_btn": "Stopp",
         "log_section": "PROTOKOLL",
     },
@@ -287,6 +302,11 @@ TRANSLATIONS = {
         ),
         "step1_check": "第一步 — 从 YouTube 下载预览",
         "step2_check": "第二步 — 切片成音粒",
+        "youtube_note": (
+            "注意：本应用不使用 Spotify API，也不下载官方 Spotify 音频。"
+            "它通过艺术家名和曲目名在 YouTube 上搜索，并下载结果的前 N 秒。"
+            "大多数曲目可以正确匹配，但部分可能返回现场录音、翻唱版或其他版本，而非录音室原版。"
+        ),
         "start_btn": "开始", "stop_btn": "停止",
         "log_section": "日志",
     },
@@ -311,6 +331,11 @@ TRANSLATIONS = {
         ),
         "step1_check": "ステップ 1 — YouTube からプレビューをダウンロード",
         "step2_check": "ステップ 2 — グレインにスライス",
+        "youtube_note": (
+            "注意：このアプリは Spotify API を使用せず、Spotify の公式音声もダウンロードしません。"
+            "アーティスト名とトラック名で YouTube を検索し、結果の最初の N 秒をダウンロードします。"
+            "ほとんどのトラックは正しくマッチしますが、ライブ録音、カバー、別バージョンが返される場合があります。"
+        ),
         "start_btn": "開始", "stop_btn": "停止",
         "log_section": "ログ",
     },
@@ -659,6 +684,22 @@ class CorpusBuilderUI:
             variable=self._do_slice, font=ctk.CTkFont(size=14))
         self._step2_chk.pack(anchor="w")
 
+        # YouTube transparency note
+        divider = ctk.CTkFrame(settings_frame, height=1,
+                               fg_color=("gray80", "gray30"))
+        divider.pack(fill="x", padx=16, pady=(12, 0))
+
+        self._youtube_note_lbl = ctk.CTkLabel(
+            settings_frame,
+            text=T["youtube_note"],
+            font=ctk.CTkFont(size=12),
+            text_color=("gray45", "gray50"),
+            justify="left",
+            anchor="w",
+            wraplength=800,
+        )
+        self._youtube_note_lbl.pack(fill="x", padx=16, pady=(8, 16))
+
         # ── Action bar — row 7 ────────────────────────────────────────────
         action_bar = ctk.CTkFrame(self.root, fg_color="transparent")
         action_bar.grid(row=7, column=0, sticky="ew", padx=14, pady=(4, 6))
@@ -761,6 +802,7 @@ class CorpusBuilderUI:
         self._start_btn.configure(text=T["start_btn"])
         self._stop_btn.configure(text=T["stop_btn"])
         self._desc_label.configure(text=T.get("app_description", ""))
+        self._youtube_note_lbl.configure(text=T.get("youtube_note", ""))
 
         n = len(self._all_tracks)
         self._count_label.configure(
