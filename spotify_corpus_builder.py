@@ -426,7 +426,7 @@ class CorpusBuilderUI:
         self._lang   = config.get("lang", "English")
 
         self.root.title(self._T()["window_title"])
-        self.root.minsize(760, 680)
+        self.root.minsize(860, 720)
 
         self._build_ui()
         self._poll_log()
@@ -447,7 +447,7 @@ class CorpusBuilderUI:
 
         # ── Header ────────────────────────────────────────────────────────
         # row 0
-        header = ctk.CTkFrame(self.root, corner_radius=0, height=76)
+        header = ctk.CTkFrame(self.root, corner_radius=0, height=86)
         header.grid(row=0, column=0, sticky="ew")
         header.grid_columnconfigure(1, weight=1)
         header.grid_propagate(False)
@@ -458,24 +458,24 @@ class CorpusBuilderUI:
         ctk.CTkLabel(
             title_block,
             text="Spotify Corpus Builder",
-            font=ctk.CTkFont(size=20, weight="bold"),
+            font=ctk.CTkFont(size=22, weight="bold"),
         ).pack(anchor="w")
 
         self._desc_label = ctk.CTkLabel(
             title_block,
             text=T["app_description"],
-            font=ctk.CTkFont(size=12),
+            font=ctk.CTkFont(size=13),
             text_color=("gray45", "gray50"),
-            wraplength=420,
+            wraplength=440,
             justify="left",
         )
-        self._desc_label.pack(anchor="w", pady=(2, 0))
+        self._desc_label.pack(anchor="w", pady=(3, 0))
 
         lang_block = ctk.CTkFrame(header, fg_color="transparent")
         lang_block.grid(row=0, column=2, padx=20, pady=10, sticky="e")
 
         self._lang_label = ctk.CTkLabel(lang_block, text=T["language_label"],
-                                        font=ctk.CTkFont(size=12))
+                                        font=ctk.CTkFont(size=13))
         self._lang_label.pack(side="left", padx=(0, 6))
 
         self._lang_var = _tk.StringVar(value=self._lang)
@@ -491,7 +491,7 @@ class CorpusBuilderUI:
         # ── FILES label — row 1 ───────────────────────────────────────────
         self._files_label = ctk.CTkLabel(
             self.root, text=T["files_section"],
-            font=ctk.CTkFont(size=12, weight="bold"),
+            font=ctk.CTkFont(size=13, weight="bold"),
             text_color=("gray40", "gray55"),
         )
         self._files_label.grid(row=1, column=0, sticky="w", padx=20, pady=(16, 4))
@@ -502,46 +502,47 @@ class CorpusBuilderUI:
         files_frame.grid_columnconfigure(1, weight=1)
 
         self._csv_lbl = ctk.CTkLabel(files_frame, text=T["csv_label"],
-                                     font=ctk.CTkFont(size=13), width=110, anchor="w")
-        self._csv_lbl.grid(row=0, column=0, padx=(16, 10), pady=(14, 4), sticky="w")
+                                     font=ctk.CTkFont(size=14), anchor="w")
+        self._csv_lbl.grid(row=0, column=0, padx=(16, 12), pady=(16, 4), sticky="w")
 
         self._csv_var = _tk.StringVar()
         ctk.CTkEntry(files_frame, textvariable=self._csv_var, state="readonly",
-                     height=34, font=ctk.CTkFont(size=12)
-                     ).grid(row=0, column=1, padx=4, pady=(14, 4), sticky="ew")
+                     height=36, font=ctk.CTkFont(size=13)
+                     ).grid(row=0, column=1, padx=4, pady=(16, 4), sticky="ew")
 
         self._csv_browse_btn = ctk.CTkButton(
-            files_frame, text=T["browse_btn"], width=96, height=34,
-            font=ctk.CTkFont(size=12), command=self._browse_csv)
-        self._csv_browse_btn.grid(row=0, column=2, padx=(4, 16), pady=(14, 4))
+            files_frame, text=T["browse_btn"], width=100, height=36,
+            font=ctk.CTkFont(size=13), command=self._browse_csv)
+        self._csv_browse_btn.grid(row=0, column=2, padx=(4, 16), pady=(16, 4))
 
         self._csv_hint_lbl = ctk.CTkLabel(
             files_frame, text=T["csv_hint"],
-            font=ctk.CTkFont(size=11),
+            font=ctk.CTkFont(size=12),
             text_color=("gray45", "gray50"),
             justify="left", anchor="w",
+            wraplength=780,
         )
         self._csv_hint_lbl.grid(row=1, column=0, columnspan=3,
-                                padx=16, pady=(0, 10), sticky="w")
+                                padx=16, pady=(0, 12), sticky="w")
 
         self._save_lbl = ctk.CTkLabel(files_frame, text=T["save_label"],
-                                      font=ctk.CTkFont(size=13), width=110, anchor="w")
-        self._save_lbl.grid(row=2, column=0, padx=(16, 10), pady=(4, 14), sticky="w")
+                                      font=ctk.CTkFont(size=14), anchor="w")
+        self._save_lbl.grid(row=2, column=0, padx=(16, 12), pady=(4, 16), sticky="w")
 
         self._out_var = _tk.StringVar(value=os.path.join(SCRIPT_DIR, "output"))
         ctk.CTkEntry(files_frame, textvariable=self._out_var,
-                     height=34, font=ctk.CTkFont(size=12)
-                     ).grid(row=2, column=1, padx=4, pady=(4, 14), sticky="ew")
+                     height=36, font=ctk.CTkFont(size=13)
+                     ).grid(row=2, column=1, padx=4, pady=(4, 16), sticky="ew")
 
         self._out_browse_btn = ctk.CTkButton(
-            files_frame, text=T["browse_btn"], width=96, height=34,
-            font=ctk.CTkFont(size=12), command=self._browse_output)
-        self._out_browse_btn.grid(row=2, column=2, padx=(4, 16), pady=(4, 14))
+            files_frame, text=T["browse_btn"], width=100, height=36,
+            font=ctk.CTkFont(size=13), command=self._browse_output)
+        self._out_browse_btn.grid(row=2, column=2, padx=(4, 16), pady=(4, 16))
 
         # ── TRACKS label — row 3 ──────────────────────────────────────────
         self._tracks_label = ctk.CTkLabel(
             self.root, text=T["tracks_section"],
-            font=ctk.CTkFont(size=12, weight="bold"),
+            font=ctk.CTkFont(size=13, weight="bold"),
             text_color=("gray40", "gray55"),
         )
         self._tracks_label.grid(row=3, column=0, sticky="w", padx=20, pady=(6, 4))
@@ -562,13 +563,13 @@ class CorpusBuilderUI:
             search_row,
             textvariable=self._search_var,
             placeholder_text=T["search_placeholder"],
-            height=36,
-            font=ctk.CTkFont(size=13),
+            height=38,
+            font=ctk.CTkFont(size=14),
         ).grid(row=0, column=0, sticky="ew", padx=(0, 12))
 
         self._count_label = ctk.CTkLabel(
             search_row, text=T["no_csv_msg"],
-            font=ctk.CTkFont(size=12),
+            font=ctk.CTkFont(size=13),
             text_color=("gray45", "gray50"),
         )
         self._count_label.grid(row=0, column=1, sticky="e")
@@ -598,7 +599,7 @@ class CorpusBuilderUI:
         # ── SETTINGS label — row 5 ────────────────────────────────────────
         self._settings_label = ctk.CTkLabel(
             self.root, text=T["settings_section"],
-            font=ctk.CTkFont(size=12, weight="bold"),
+            font=ctk.CTkFont(size=13, weight="bold"),
             text_color=("gray40", "gray55"),
         )
         self._settings_label.grid(row=5, column=0, sticky="w", padx=20, pady=(6, 4))
@@ -617,43 +618,46 @@ class CorpusBuilderUI:
         params_row = ctk.CTkFrame(settings_frame, fg_color="transparent")
         params_row.pack(fill="x", padx=16, pady=(14, 6))
 
-        def _param(parent, label_key, var, width=76):
+        def _param(parent, label_key, var, width=84):
             f = ctk.CTkFrame(parent, fg_color="transparent")
-            lbl = ctk.CTkLabel(f, text=T[label_key], font=ctk.CTkFont(size=12))
-            lbl.pack(anchor="w")
-            entry = ctk.CTkEntry(f, textvariable=var, width=width, height=32,
-                                 font=ctk.CTkFont(size=13), justify="center")
-            entry.pack(pady=(4, 0))
+            lbl = ctk.CTkLabel(f, text=T[label_key], font=ctk.CTkFont(size=13),
+                               wraplength=200, justify="left", anchor="w")
+            lbl.pack(anchor="w", fill="x")
+            entry = ctk.CTkEntry(f, textvariable=var, width=width, height=36,
+                                 font=ctk.CTkFont(size=14), justify="center")
+            entry.pack(pady=(6, 0))
             return f, lbl
 
         f1, self._dl_lbl  = _param(params_row, "dl_length_label", self._prev_len_var)
         f2, self._off_lbl = _param(params_row, "offset_label",    self._offset_var)
         f3, self._dur_lbl = _param(params_row, "duration_label",  self._duration_var)
         for f in (f1, f2, f3):
-            f.pack(side="left", padx=(0, 28))
+            f.pack(side="left", padx=(0, 32))
 
         self._explain_lbl = ctk.CTkLabel(
             settings_frame,
             text=T["explain_text"],
-            font=ctk.CTkFont(size=11),
+            font=ctk.CTkFont(size=12),
             text_color=("gray45", "gray50"),
             justify="left",
             anchor="w",
+            wraplength=800,
         )
-        self._explain_lbl.pack(fill="x", padx=16, pady=(4, 8))
+        self._explain_lbl.pack(fill="x", padx=16, pady=(6, 10))
 
-        steps_row = ctk.CTkFrame(settings_frame, fg_color="transparent")
-        steps_row.pack(fill="x", padx=16, pady=(0, 14))
+        # Checkboxes stacked vertically so long translated text never overflows
+        steps_frame = ctk.CTkFrame(settings_frame, fg_color="transparent")
+        steps_frame.pack(fill="x", padx=16, pady=(0, 16))
 
         self._step1_chk = ctk.CTkCheckBox(
-            steps_row, text=T["step1_check"],
-            variable=self._do_download, font=ctk.CTkFont(size=13))
-        self._step1_chk.pack(side="left", padx=(0, 28))
+            steps_frame, text=T["step1_check"],
+            variable=self._do_download, font=ctk.CTkFont(size=14))
+        self._step1_chk.pack(anchor="w", pady=(0, 8))
 
         self._step2_chk = ctk.CTkCheckBox(
-            steps_row, text=T["step2_check"],
-            variable=self._do_slice, font=ctk.CTkFont(size=13))
-        self._step2_chk.pack(side="left")
+            steps_frame, text=T["step2_check"],
+            variable=self._do_slice, font=ctk.CTkFont(size=14))
+        self._step2_chk.pack(anchor="w")
 
         # ── Action bar — row 7 ────────────────────────────────────────────
         action_bar = ctk.CTkFrame(self.root, fg_color="transparent")
@@ -661,16 +665,16 @@ class CorpusBuilderUI:
         action_bar.grid_columnconfigure(2, weight=1)
 
         self._start_btn = ctk.CTkButton(
-            action_bar, text=T["start_btn"], width=110, height=40,
+            action_bar, text=T["start_btn"], width=120, height=42,
             command=self._start, state="disabled",
-            font=ctk.CTkFont(size=14, weight="bold"))
+            font=ctk.CTkFont(size=15, weight="bold"))
         self._start_btn.grid(row=0, column=0, padx=(0, 10))
 
         self._stop_btn = ctk.CTkButton(
-            action_bar, text=T["stop_btn"], width=110, height=40,
+            action_bar, text=T["stop_btn"], width=120, height=42,
             command=self._stop, state="disabled",
             fg_color=("gray70", "gray30"), hover_color=("gray60", "gray40"),
-            font=ctk.CTkFont(size=14))
+            font=ctk.CTkFont(size=15))
         self._stop_btn.grid(row=0, column=1)
 
         self._progress = ctk.CTkProgressBar(action_bar, mode="indeterminate", height=10)
@@ -680,7 +684,7 @@ class CorpusBuilderUI:
         # ── LOG label — row 8 ─────────────────────────────────────────────
         self._log_label = ctk.CTkLabel(
             self.root, text=T["log_section"],
-            font=ctk.CTkFont(size=12, weight="bold"),
+            font=ctk.CTkFont(size=13, weight="bold"),
             text_color=("gray40", "gray55"),
         )
         self._log_label.grid(row=8, column=0, sticky="w", padx=20, pady=(4, 4))
@@ -690,8 +694,8 @@ class CorpusBuilderUI:
         log_frame.grid(row=9, column=0, sticky="ew", padx=14, pady=(0, 14))
 
         self._log_area = ctk.CTkTextbox(
-            log_frame, height=160, state="disabled",
-            font=ctk.CTkFont(family="Courier", size=12), wrap="none")
+            log_frame, height=170, state="disabled",
+            font=ctk.CTkFont(family="Courier", size=13), wrap="none")
         self._log_area.pack(fill="both", expand=True, padx=6, pady=6)
 
     def _style_treeview(self):
