@@ -38,7 +38,7 @@ if hasattr(sys.stdout, "reconfigure"):
 try:
     import yt_dlp
 except ImportError:
-    print("ERROR: yt-dlp not installed. Run: pip install yt-dlp")
+    print("yt-dlp is not installed. Run setup.bat (Windows) or setup.sh (Mac) to fix this.")
     sys.exit(1)
 
 
@@ -64,9 +64,10 @@ def ffmpeg_bin() -> str:
     ]:
         if os.path.isfile(candidate):
             return candidate
-    print("ERROR: ffmpeg not found.")
-    print("  macOS:   brew install ffmpeg")
-    print("  Windows: winget install ffmpeg")
+    print("ffmpeg is not installed or not found on your system.")
+    print("  Windows: open PowerShell and run   winget install ffmpeg")
+    print("  Mac:     open Terminal and run      brew install ffmpeg")
+    print("Then restart the app.")
     sys.exit(1)
 
 
@@ -200,7 +201,7 @@ TRANSLATIONS = {
         "files_section": "FILES", "language_label": "Language",
         "csv_label": "Load CSV File",
         "csv_hint": "CSV must have 'Track Name' and 'Artist Name(s)' columns.  Export any Spotify playlist free at exportify.net",
-        "csv_error_cols": "No tracks found — make sure your CSV has 'Track Name' and 'Artist Name(s)' columns.\nExport from Spotify using exportify.net (free, no install needed).",
+        "csv_error_cols": "No tracks found. Make sure your CSV has 'Track Name' and 'Artist Name(s)' columns.\nExport from Spotify using exportify.net (free, no install needed).",
         "save_label": "Save To", "browse_btn": "Browse",
         "tracks_section": "TRACKS", "search_placeholder": "Search artist or track...",
         "no_csv_msg": "No CSV loaded", "status_loaded": "{n} tracks loaded",
@@ -229,7 +230,7 @@ TRANSLATIONS = {
         "files_section": "ARCHIVOS", "language_label": "Idioma",
         "csv_label": "Cargar archivo CSV",
         "csv_hint": "El CSV debe tener columnas 'Track Name' y 'Artist Name(s)'.  Exporta cualquier lista de Spotify en exportify.net",
-        "csv_error_cols": "No se encontraron pistas — verifica que el CSV tenga columnas 'Track Name' y 'Artist Name(s)'.\nExporta desde Spotify usando exportify.net (gratis, sin instalacion).",
+        "csv_error_cols": "No se encontraron pistas. Verifica que el CSV tenga columnas 'Track Name' y 'Artist Name(s)'.\nExporta desde Spotify usando exportify.net (gratis, sin instalacion).",
         "save_label": "Guardar en", "browse_btn": "Explorar",
         "tracks_section": "PISTAS", "search_placeholder": "Buscar artista o pista...",
         "no_csv_msg": "No hay CSV cargado", "status_loaded": "{n} pistas cargadas",
@@ -258,7 +259,7 @@ TRANSLATIONS = {
         "files_section": "DATEIEN", "language_label": "Sprache",
         "csv_label": "CSV-Datei laden",
         "csv_hint": "CSV muss Spalten 'Track Name' und 'Artist Name(s)' enthalten.  Exportiere Spotify-Playlists kostenlos auf exportify.net",
-        "csv_error_cols": "Keine Titel gefunden — stelle sicher, dass die CSV Spalten 'Track Name' und 'Artist Name(s)' hat.\nExportieren mit exportify.net (kostenlos, keine Installation).",
+        "csv_error_cols": "Keine Titel gefunden. Stelle sicher, dass die CSV Spalten 'Track Name' und 'Artist Name(s)' hat.\nExportieren mit exportify.net (kostenlos, keine Installation).",
         "save_label": "Speichern unter", "browse_btn": "Durchsuchen",
         "tracks_section": "TITEL", "search_placeholder": "Kunstler oder Titel suchen...",
         "no_csv_msg": "Keine CSV geladen", "status_loaded": "{n} Titel geladen",
@@ -287,7 +288,7 @@ TRANSLATIONS = {
         "files_section": "文件", "language_label": "语言",
         "csv_label": "加载 CSV 文件",
         "csv_hint": "CSV 必须包含 'Track Name' 和 'Artist Name(s)' 列。  在 exportify.net 免费导出任意 Spotify 播放列表",
-        "csv_error_cols": "未找到曲目 — 请确认 CSV 包含 'Track Name' 和 'Artist Name(s)' 列。\n可在 exportify.net 从 Spotify 导出（免费，无需安装）。",
+        "csv_error_cols": "未找到曲目。请确认 CSV 包含 'Track Name' 和 'Artist Name(s)' 列。\n可在 exportify.net 从 Spotify 导出（免费，无需安装）。",
         "save_label": "保存到", "browse_btn": "浏览",
         "tracks_section": "曲目", "search_placeholder": "搜索艺术家或曲目...",
         "no_csv_msg": "未加载 CSV", "status_loaded": "已加载 {n} 首曲目",
@@ -316,7 +317,7 @@ TRANSLATIONS = {
         "files_section": "ファイル", "language_label": "言語",
         "csv_label": "CSV ファイルを読み込む",
         "csv_hint": "CSV には 'Track Name' と 'Artist Name(s)' 列が必要です。  exportify.net で Spotify プレイリストを無料エクスポート",
-        "csv_error_cols": "トラックが見つかりません — CSV に 'Track Name' と 'Artist Name(s)' 列があるか確認してください。\nexportify.net で Spotify からエクスポートできます（無料・インストール不要）。",
+        "csv_error_cols": "トラックが見つかりません。CSV に 'Track Name' と 'Artist Name(s)' 列があるか確認してください。\nexportify.net で Spotify からエクスポートできます（無料・インストール不要）。",
         "save_label": "保存先", "browse_btn": "参照",
         "tracks_section": "トラック", "search_placeholder": "アーティストまたはトラックを検索...",
         "no_csv_msg": "CSV が読み込まれていません", "status_loaded": "{n} トラック読み込み済み",
@@ -896,7 +897,7 @@ class CorpusBuilderUI:
             offset   = float(self._offset_var.get())
             duration = float(self._duration_var.get())
         except ValueError:
-            self._log_write("ERROR: Invalid number in settings — check Download length, Offset, and Duration.")
+            self._log_write("One of the number fields has an invalid value. Check that Download length, Offset, and Duration are all plain numbers (for example: 30, 5.0, 1.5).")
             self.root.after(0, self._on_done)
             return
 
@@ -947,7 +948,7 @@ def main():
         try:
             import customtkinter as ctk
         except ImportError:
-            print("ERROR: customtkinter not installed. Run: pip install customtkinter")
+            print("customtkinter is not installed. Run setup.bat (Windows) or setup.sh (Mac) to fix this.")
             sys.exit(1)
 
         apply_startup_theme()

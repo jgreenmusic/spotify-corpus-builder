@@ -5,8 +5,9 @@ Downloads audio for every track in a Spotify CSV export, then slices each
 one into a short grain for use as a sample corpus.
 
 What you get:
-  output/previews/  --  one WAV per track (default: 30 seconds)
-  output/grains/    --  one short slice per track (default: 1.5 seconds, starting 5 seconds in)
+  output/previews/  --  one WAV per track (default: 30 seconds each)
+  output/grains/    --  one short slice per track (default: 1.5 seconds,
+                        starting 5 seconds into the preview)
 
 
 IMPORTANT: HOW THE DOWNLOADS WORK
@@ -27,14 +28,11 @@ IMPORTANT: HOW THE DOWNLOADS WORK
       video, or a fan upload instead of the original studio recording.
       This is a limitation of relying on YouTube search results.
 
-    - Very obscure tracks may not be found at all and will show [failed].
+    - Very obscure tracks may not be found at all and will show [failed]
+      in the log.
 
     - You are downloading publicly available audio from YouTube. Make sure
       this is appropriate for your use case.
-
-  If a match looks wrong, you can check the filename -- it will be named
-  after the artist and track from your CSV, regardless of what was actually
-  downloaded.
 
 
 WHAT YOU NEED BEFORE RUNNING
@@ -93,27 +91,32 @@ HOW TO EXPORT YOUR CSV FROM SPOTIFY
   Exportify produces exactly this format.
 
 
-OPTIONS (command line / advanced use)
----------------------------------------
+CHANGING HOW IT WORKS
+-----------------------
 
-  --preview-length  How many seconds to download per track  (default: 30)
-  --offset          Seconds into the preview to start the grain  (default: 5.0)
-  --duration        Length of each grain in seconds  (default: 1.5)
-  --csv             Path to a Spotify CSV file  (default: Liked_Songs.csv)
-  --output          Where to save the files  (default: ./output/)
-  --skip-download   Skip downloading, just slice existing previews
-  --skip-slice      Download only, skip slicing
+  Everything below can be adjusted in the Settings section of the app.
+  You do not need to use the command line for any of this.
 
-  Examples:
+  Download length
+    How many seconds of each track to download. The default is 30 seconds.
+    You might lower this if you want smaller files and a faster run, or raise
+    it if you want more of each track to work with before slicing.
 
-    Longer grains starting later in the preview:
-      python spotify_corpus_builder.py --offset 10 --duration 3.0
+  Start cut at
+    How far into the downloaded preview to start your grain. The default is
+    5 seconds in. The first few seconds of a track are often an intro or
+    fade-in, so starting a little further in usually gives you a more
+    representative slice of the song.
 
-    Download only (no slicing):
-      python spotify_corpus_builder.py --skip-slice
+  Cut length
+    How long each grain should be. The default is 1.5 seconds. Shorter grains
+    work well for dense concatenative synthesis. Longer grains preserve more
+    musical context and are better if you want recognizable fragments.
 
-    Use a different CSV:
-      python spotify_corpus_builder.py --csv my_playlist.csv --output ./my_corpus/
+  Step 1 and Step 2 checkboxes
+    You can run just the download, just the slicing, or both. This is useful
+    if you already have previews downloaded and only want to re-slice them
+    with different settings, without downloading everything again.
 
 
 OUTPUT STRUCTURE
@@ -128,23 +131,32 @@ OUTPUT STRUCTURE
       ...
 
 
-TROUBLESHOOTING
-----------------
+IF SOMETHING GOES WRONG
+-------------------------
 
-  "yt-dlp not installed"
-    Run: pip install yt-dlp  (Windows)  or  pip3 install yt-dlp  (Mac)
+  The log area at the bottom of the app will tell you what happened and
+  what to do. Error messages are written to explain the fix, not just
+  describe the problem.
 
-  "ffmpeg not found"
-    Install ffmpeg and make sure it is on your PATH.
-    Run setup.bat or setup.sh for step-by-step instructions.
+  What if the app won't open at all?
+    Run setup.bat (Windows) or setup.sh (Mac). Something was not installed
+    correctly. The setup script will find and fix it.
 
-  A track shows [failed]
-    yt-dlp could not find it on YouTube. Normal for very obscure tracks.
-    Everything else still downloads.
+  What if a track shows [failed] in the log?
+    yt-dlp could not find that track on YouTube. This is normal for obscure
+    tracks. Everything else still downloads. You can run the app again and
+    it will skip tracks that already finished.
 
-  A downloaded file sounds wrong (wrong version, live recording, etc.)
-    This is a known limitation -- see "HOW THE DOWNLOADS WORK" above.
-    YouTube search does not always return the studio version.
+  What if a downloaded file sounds wrong (live version, cover, etc.)?
+    This is a known limitation of using YouTube search. The app has no way
+    to guarantee the studio version comes back. See the "HOW THE DOWNLOADS
+    WORK" section above for a full explanation.
 
-  Script stopped halfway
-    Just run it again. It skips anything already downloaded.
+  What if the app stops halfway through?
+    Just run it again. It skips any track that already has a file in the
+    output folder.
+
+  What if the track list is empty after loading a CSV?
+    The CSV columns are not in the expected format. The app will explain
+    what it needs in the log. Exporting your playlist fresh from exportify.net
+    will always produce the correct format.
