@@ -199,6 +199,8 @@ TRANSLATIONS = {
         "app_description": "Load a Spotify CSV, download audio previews from YouTube, and slice them into short grains for use as a sample corpus.",
         "files_section": "FILES", "language_label": "Language",
         "csv_label": "Load CSV File",
+        "csv_hint": "CSV must have 'Track Name' and 'Artist Name(s)' columns.  Export any Spotify playlist free at exportify.net",
+        "csv_error_cols": "No tracks found — make sure your CSV has 'Track Name' and 'Artist Name(s)' columns.\nExport from Spotify using exportify.net (free, no install needed).",
         "save_label": "Save To", "browse_btn": "Browse",
         "tracks_section": "TRACKS", "search_placeholder": "Search artist or track...",
         "no_csv_msg": "No CSV loaded", "status_loaded": "{n} tracks loaded",
@@ -221,6 +223,8 @@ TRANSLATIONS = {
         "app_description": "Carga un CSV de Spotify, descarga vistas previas de audio de YouTube y cortalas en granos cortos para usar como corpus de muestras.",
         "files_section": "ARCHIVOS", "language_label": "Idioma",
         "csv_label": "Cargar archivo CSV",
+        "csv_hint": "El CSV debe tener columnas 'Track Name' y 'Artist Name(s)'.  Exporta cualquier lista de Spotify en exportify.net",
+        "csv_error_cols": "No se encontraron pistas — verifica que el CSV tenga columnas 'Track Name' y 'Artist Name(s)'.\nExporta desde Spotify usando exportify.net (gratis, sin instalacion).",
         "save_label": "Guardar en", "browse_btn": "Explorar",
         "tracks_section": "PISTAS", "search_placeholder": "Buscar artista o pista...",
         "no_csv_msg": "No hay CSV cargado", "status_loaded": "{n} pistas cargadas",
@@ -243,6 +247,8 @@ TRANSLATIONS = {
         "app_description": "Lade eine Spotify-CSV, lade Audio-Vorschauen von YouTube herunter und schneide sie in kurze Korner fur einen Sample-Corpus.",
         "files_section": "DATEIEN", "language_label": "Sprache",
         "csv_label": "CSV-Datei laden",
+        "csv_hint": "CSV muss Spalten 'Track Name' und 'Artist Name(s)' enthalten.  Exportiere Spotify-Playlists kostenlos auf exportify.net",
+        "csv_error_cols": "Keine Titel gefunden — stelle sicher, dass die CSV Spalten 'Track Name' und 'Artist Name(s)' hat.\nExportieren mit exportify.net (kostenlos, keine Installation).",
         "save_label": "Speichern unter", "browse_btn": "Durchsuchen",
         "tracks_section": "TITEL", "search_placeholder": "Kunstler oder Titel suchen...",
         "no_csv_msg": "Keine CSV geladen", "status_loaded": "{n} Titel geladen",
@@ -265,6 +271,8 @@ TRANSLATIONS = {
         "app_description": "加载 Spotify CSV，从 YouTube 下载音频预览，并将其切割成短片段，用作采样语料库。",
         "files_section": "文件", "language_label": "语言",
         "csv_label": "加载 CSV 文件",
+        "csv_hint": "CSV 必须包含 'Track Name' 和 'Artist Name(s)' 列。  在 exportify.net 免费导出任意 Spotify 播放列表",
+        "csv_error_cols": "未找到曲目 — 请确认 CSV 包含 'Track Name' 和 'Artist Name(s)' 列。\n可在 exportify.net 从 Spotify 导出（免费，无需安装）。",
         "save_label": "保存到", "browse_btn": "浏览",
         "tracks_section": "曲目", "search_placeholder": "搜索艺术家或曲目...",
         "no_csv_msg": "未加载 CSV", "status_loaded": "已加载 {n} 首曲目",
@@ -287,6 +295,8 @@ TRANSLATIONS = {
         "app_description": "Spotify の CSV を読み込み、YouTube から音声プレビューをダウンロードし、サンプルコーパス用の短いグレインにスライスします。",
         "files_section": "ファイル", "language_label": "言語",
         "csv_label": "CSV ファイルを読み込む",
+        "csv_hint": "CSV には 'Track Name' と 'Artist Name(s)' 列が必要です。  exportify.net で Spotify プレイリストを無料エクスポート",
+        "csv_error_cols": "トラックが見つかりません — CSV に 'Track Name' と 'Artist Name(s)' 列があるか確認してください。\nexportify.net で Spotify からエクスポートできます（無料・インストール不要）。",
         "save_label": "保存先", "browse_btn": "参照",
         "tracks_section": "トラック", "search_placeholder": "アーティストまたはトラックを検索...",
         "no_csv_msg": "CSV が読み込まれていません", "status_loaded": "{n} トラック読み込み済み",
@@ -390,7 +400,7 @@ def load_tracks_from_csv(path: str):
                 if name and artist:
                     tracks.append({"artist": artist, "name": name})
         if not tracks:
-            return [], "No tracks found. Check that the CSV has Track Name and Artist columns."
+            return [], "No tracks found — check Track Name and Artist Name(s) columns."
         return tracks, ""
     except Exception as e:
         return [], str(e)
@@ -507,19 +517,31 @@ class CorpusBuilderUI:
             command=self._browse_csv)
         self._csv_browse_btn.grid(row=1, column=2, padx=(4, 14), pady=6)
 
+        # CSV format hint
+        self._csv_hint_lbl = ctk.CTkLabel(
+            files_frame,
+            text=T["csv_hint"],
+            font=ctk.CTkFont(size=10),
+            text_color=("gray50", "gray55"),
+            justify="left",
+            anchor="w",
+        )
+        self._csv_hint_lbl.grid(row=2, column=0, columnspan=3,
+                                padx=(14, 14), pady=(0, 6), sticky="w")
+
         # Output row
         self._save_lbl = ctk.CTkLabel(files_frame, text=T["save_label"],
                                       font=ctk.CTkFont(size=12))
-        self._save_lbl.grid(row=2, column=0, padx=(14, 8), pady=6, sticky="w")
+        self._save_lbl.grid(row=3, column=0, padx=(14, 8), pady=6, sticky="w")
 
         self._out_var = _tk.StringVar(value=os.path.join(SCRIPT_DIR, "output"))
         ctk.CTkEntry(files_frame, textvariable=self._out_var,
-                     height=32).grid(row=2, column=1, padx=4, pady=6, sticky="ew")
+                     height=32).grid(row=3, column=1, padx=4, pady=6, sticky="ew")
 
         self._out_browse_btn = ctk.CTkButton(
             files_frame, text=T["browse_btn"], width=90, height=32,
             command=self._browse_output)
-        self._out_browse_btn.grid(row=2, column=2, padx=(4, 14), pady=6)
+        self._out_browse_btn.grid(row=3, column=2, padx=(4, 14), pady=6)
 
         # ── Tracks section ────────────────────────────────────────────────
         self._tracks_label = ctk.CTkLabel(
@@ -727,6 +749,7 @@ class CorpusBuilderUI:
         self._log_label.configure(text=T["log_section"])
         self._lang_label.configure(text=T["language_label"])
         self._csv_lbl.configure(text=T["csv_label"])
+        self._csv_hint_lbl.configure(text=T["csv_hint"])
         self._save_lbl.configure(text=T["save_label"])
         self._csv_browse_btn.configure(text=T["browse_btn"])
         self._out_browse_btn.configure(text=T["browse_btn"])
@@ -768,7 +791,13 @@ class CorpusBuilderUI:
         tracks, err = load_tracks_from_csv(path)
         T = self._T()
         if err:
-            self._count_label.configure(text=f"Error: {err}")
+            # Use specific column-format error if no tracks were found
+            if "Track Name" in err or "no tracks" in err.lower():
+                msg = T.get("csv_error_cols", err)
+            else:
+                msg = err
+            self._count_label.configure(text="Error — see log")
+            self._log_write(msg)
             self._all_tracks = []
             self._refresh_tree([])
             self._start_btn.configure(state="disabled")
