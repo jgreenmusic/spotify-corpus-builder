@@ -14,8 +14,8 @@ echo "[OK] $(python3 --version)"
 
 # Install yt-dlp
 echo
-echo "Installing yt-dlp..."
-pip3 install --upgrade yt-dlp
+echo "Installing dependencies..."
+pip3 install --upgrade yt-dlp customtkinter
 if [ $? -ne 0 ]; then
     echo "ERROR: pip3 install failed."
     exit 1

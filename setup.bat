@@ -16,10 +16,10 @@ if errorlevel 1 (
 echo [OK] Python found
 python --version
 
-:: Install yt-dlp
+:: Install dependencies
 echo.
-echo Installing yt-dlp...
-pip install --upgrade yt-dlp
+echo Installing dependencies...
+pip install --upgrade yt-dlp customtkinter
 if errorlevel 1 (
     echo ERROR: pip install failed. Try running this as Administrator.
     pause

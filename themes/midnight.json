@@ -1,0 +1,17 @@
+{
+  "_name": "Midnight",
+  "_appearance_mode": "Dark",
+  "CTk":            { "fg_color": ["#f0f0f0", "#0d0d14"] },
+  "CTkToplevel":    { "fg_color": ["#f0f0f0", "#0d0d14"] },
+  "CTkFrame":       { "fg_color": ["#e0e0e0", "#13131f"], "top_fg_color": ["#d0d0d0", "#1a1a2e"], "border_color": ["#b0b0b0", "#2e2e4e"] },
+  "CTkButton":      { "fg_color": ["#7c3aed", "#6d28d9"], "hover_color": ["#6d28d9", "#5b21b6"], "border_color": ["#3E454A", "#7c3aed"], "text_color": ["#ffffff", "#ffffff"], "text_color_disabled": ["#888888", "#555577"] },
+  "CTkLabel":       { "fg_color": "transparent", "text_color": ["#111111", "#c8c8e8"] },
+  "CTkEntry":       { "fg_color": ["#ffffff", "#1a1a2e"], "border_color": ["#b0b0b0", "#3a3a5e"], "text_color": ["#111111", "#c8c8e8"], "placeholder_text_color": ["#888888", "#555577"] },
+  "CTkCheckBox":    { "fg_color": ["#7c3aed", "#6d28d9"], "border_color": ["#3E454A", "#7c3aed"], "hover_color": ["#6d28d9", "#5b21b6"], "checkmark_color": ["#ffffff", "#ffffff"], "text_color": ["#111111", "#c8c8e8"], "text_color_disabled": ["#888888", "#555577"] },
+  "CTkComboBox":    { "fg_color": ["#ffffff", "#1a1a2e"], "border_color": ["#b0b0b0", "#3a3a5e"], "button_color": ["#b0b0b0", "#3a3a5e"], "button_hover_color": ["#888888", "#2e2e4e"], "text_color": ["#111111", "#c8c8e8"], "text_color_disabled": ["#888888", "#555577"] },
+  "CTkScrollbar":   { "fg_color": "transparent", "button_color": ["#b0b0b0", "#3a3a5e"], "button_hover_color": ["#888888", "#6d28d9"] },
+  "CTkProgressBar": { "fg_color": ["#d0d0d0", "#1a1a2e"], "progress_color": ["#7c3aed", "#6d28d9"], "border_color": ["#b0b0b0", "#3a3a5e"] },
+  "CTkTextbox":     { "fg_color": ["#ffffff", "#0f0f1a"], "border_color": ["#b0b0b0", "#2e2e4e"], "text_color": ["#111111", "#c8c8e8"], "scrollbar_button_color": ["#b0b0b0", "#3a3a5e"], "scrollbar_button_hover_color": ["#888888", "#6d28d9"] },
+  "CTkScrollableFrame": { "label_fg_color": ["#d0d0d0", "#1a1a2e"] },
+  "CTkFont": { "macOS": { "family": "SF Pro Display", "size": 13, "weight": "normal" }, "Windows": { "family": "Segoe UI", "size": 13, "weight": "normal" }, "Linux": { "family": "Ubuntu", "size": 13, "weight": "normal" } }
+}

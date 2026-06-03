@@ -5,9 +5,9 @@ Downloads preview clips for every track in a Spotify CSV export, then
 slices each clip to a short grain for use as a corpus.
 
 Prerequisites:
-    pip install yt-dlp          (or: pip3 install yt-dlp on Mac)
+    pip install yt-dlp customtkinter
     ffmpeg on PATH:
-      Windows: winget install ffmpeg   (or download from https://ffmpeg.org)
+      Windows: winget install ffmpeg
       Mac:     brew install ffmpeg
 
 GUI usage (default):
@@ -15,9 +15,7 @@ GUI usage (default):
     Mac/Linux: python3 spotify_corpus_builder.py
 
 CLI usage:
-    python spotify_corpus_builder.py --csv my_songs.csv
-    python spotify_corpus_builder.py --offset 8 --duration 2.0
-    python spotify_corpus_builder.py --preview-length 15 --offset 3 --duration 1.0
+    python spotify_corpus_builder.py --csv my_songs.csv [--offset 8] [--duration 2.0]
     python spotify_corpus_builder.py --skip-download
     python spotify_corpus_builder.py --skip-slice
 """
@@ -66,7 +64,7 @@ def ffmpeg_bin() -> str:
     ]:
         if os.path.isfile(candidate):
             return candidate
-    print("ERROR: ffmpeg not found. Install it and make sure it is on your PATH.")
+    print("ERROR: ffmpeg not found.")
     print("  macOS:   brew install ffmpeg")
     print("  Windows: winget install ffmpeg")
     sys.exit(1)
@@ -114,14 +112,12 @@ def download_track(artist: str, name: str, wav_path: str, preview_length: int) -
                 os.remove(f)
             except OSError:
                 pass
-
     return False
 
 
 def run_download(csv_path: str, previews_dir: str, preview_length: int,
                  stop_event: threading.Event = None):
     os.makedirs(previews_dir, exist_ok=True)
-
     tracks = []
     with open(csv_path, newline="", encoding="utf-8-sig") as f:
         for row in csv.DictReader(f):
@@ -132,22 +128,18 @@ def run_download(csv_path: str, previews_dir: str, preview_length: int,
 
     print(f"\n=== DOWNLOAD ({len(tracks)} tracks -> {preview_length}s previews) ===")
     print(f"Output: {previews_dir}\n")
-
     downloaded = skipped = failed = 0
 
     for i, track in enumerate(tracks, 1):
         if stop_event and stop_event.is_set():
             print("\nStopped by user.")
             break
-
         filename = sanitize(f"{track['artist']} - {track['name']}")
         wav_path = os.path.join(previews_dir, filename + ".wav")
-
         if os.path.exists(wav_path):
             print(f"  [{i}/{len(tracks)}] [exists]  {filename}.wav")
             skipped += 1
             continue
-
         print(f"  [{i}/{len(tracks)}] [fetch]   {track['artist']} - {track['name']}")
         if download_track(track["artist"], track["name"], wav_path, preview_length):
             print(f"  [{i}/{len(tracks)}] [done]    {filename}.wav")
@@ -155,7 +147,6 @@ def run_download(csv_path: str, previews_dir: str, preview_length: int,
         else:
             print(f"  [{i}/{len(tracks)}] [failed]  {track['artist']} - {track['name']}")
             failed += 1
-
         time.sleep(1)
 
     print(f"\nDownload complete - downloaded: {downloaded}  skipped: {skipped}  failed: {failed}")
@@ -164,45 +155,32 @@ def run_download(csv_path: str, previews_dir: str, preview_length: int,
 # ── Step 2: Slice ─────────────────────────────────────────────────────────────
 
 def slice_preview(src: str, dst: str, offset: float, duration: float, ffmpeg: str) -> bool:
-    cmd = [
-        ffmpeg, "-y",
-        "-ss", str(offset),
-        "-t",  str(duration),
-        "-i",  src,
-        "-ar", "44100",
-        "-ac", "2",
-        dst,
-    ]
-    result = subprocess.run(cmd, capture_output=True)
-    return result.returncode == 0
+    cmd = [ffmpeg, "-y", "-ss", str(offset), "-t", str(duration),
+           "-i", src, "-ar", "44100", "-ac", "2", dst]
+    return subprocess.run(cmd, capture_output=True).returncode == 0
 
 
 def run_slice(previews_dir: str, grains_dir: str, offset: float, duration: float,
               stop_event: threading.Event = None):
     os.makedirs(grains_dir, exist_ok=True)
     ffmpeg = ffmpeg_bin()
-
     wav_files = sorted(f for f in os.listdir(previews_dir) if f.lower().endswith(".wav"))
     total = len(wav_files)
 
     print(f"\n=== SLICE ({total} files -> offset {offset}s, grain {duration}s) ===")
     print(f"Output: {grains_dir}\n")
-
     done = skipped = failed = 0
 
     for i, fname in enumerate(wav_files, 1):
         if stop_event and stop_event.is_set():
             print("\nStopped by user.")
             break
-
         src = os.path.join(previews_dir, fname)
         dst = os.path.join(grains_dir, fname)
-
         if os.path.exists(dst):
             print(f"  [{i}/{total}] [exists]  {fname}")
             skipped += 1
             continue
-
         if slice_preview(src, dst, offset, duration, ffmpeg):
             print(f"  [{i}/{total}] [sliced]  {fname}")
             done += 1
@@ -217,135 +195,114 @@ def run_slice(previews_dir: str, grains_dir: str, offset: float, duration: float
 
 TRANSLATIONS = {
     "English": {
-        "window_title":   "Spotify Corpus Builder",
-        "files_frame":    "Files",
-        "language_label": "Language:",
-        "csv_label":      "Load CSV File:",
-        "save_label":     "Save To:",
-        "browse_btn":     "Browse...",
-        "tracks_frame":   "Tracks",
-        "search_label":   "Search:",
-        "no_csv_msg":     "No CSV loaded",
-        "status_loaded":  "{n} tracks loaded",
-        "status_filtered":"{n} of {m} tracks",
-        "settings_frame": "Settings",
-        "dl_length_label":"Download length (seconds):",
-        "offset_label":   "Start cut at (seconds in):",
-        "duration_label": "Cut length (seconds):",
-        "explain_text":   "Slicing takes each downloaded preview and cuts a short section from it.\n"
-                          "Offset = where in the file the cut starts.  "
-                          "Cut length = how long each grain is.",
-        "step1_check":    "Step 1 - Download previews from YouTube",
-        "step2_check":    "Step 2 - Slice into grains",
-        "log_frame":      "Log",
-        "start_btn":      "Start",
-        "stop_btn":       "Stop",
+        "window_title": "Spotify Corpus Builder",
+        "files_section": "FILES", "language_label": "Language",
+        "theme_label": "Theme", "csv_label": "Load CSV File",
+        "save_label": "Save To", "browse_btn": "Browse",
+        "tracks_section": "TRACKS", "search_placeholder": "Search artist or track...",
+        "no_csv_msg": "No CSV loaded", "status_loaded": "{n} tracks loaded",
+        "status_filtered": "{n} of {m} tracks",
+        "settings_section": "SETTINGS",
+        "dl_length_label": "Download length (seconds)",
+        "offset_label": "Start cut at (seconds in)",
+        "duration_label": "Cut length (seconds)",
+        "explain_text": (
+            "Slicing takes each downloaded preview and cuts a short section from it.\n"
+            "Offset = where in the file the cut starts.   Cut length = how long each grain is."
+        ),
+        "step1_check": "Step 1 — Download previews from YouTube",
+        "step2_check": "Step 2 — Slice into grains",
+        "start_btn": "Start", "stop_btn": "Stop",
+        "log_section": "LOG",
     },
-    "Español": {
-        "window_title":   "Constructor de Corpus de Spotify",
-        "files_frame":    "Archivos",
-        "language_label": "Idioma:",
-        "csv_label":      "Cargar archivo CSV:",
-        "save_label":     "Guardar en:",
-        "browse_btn":     "Explorar...",
-        "tracks_frame":   "Pistas",
-        "search_label":   "Buscar:",
-        "no_csv_msg":     "No hay CSV cargado",
-        "status_loaded":  "{n} pistas cargadas",
-        "status_filtered":"{n} de {m} pistas",
-        "settings_frame": "Configuración",
-        "dl_length_label":"Duración de descarga (segundos):",
-        "offset_label":   "Iniciar corte en (segundos):",
-        "duration_label": "Duración del corte (segundos):",
-        "explain_text":   "El corte toma cada vista previa descargada y extrae una sección corta.\n"
-                          "Desplazamiento = dónde comienza el corte.  "
-                          "Duración = cuánto dura cada grano.",
-        "step1_check":    "Paso 1 - Descargar vistas previas de YouTube",
-        "step2_check":    "Paso 2 - Cortar en granos",
-        "log_frame":      "Registro",
-        "start_btn":      "Iniciar",
-        "stop_btn":       "Detener",
+    "Espanol": {
+        "window_title": "Constructor de Corpus de Spotify",
+        "files_section": "ARCHIVOS", "language_label": "Idioma",
+        "theme_label": "Tema", "csv_label": "Cargar archivo CSV",
+        "save_label": "Guardar en", "browse_btn": "Explorar",
+        "tracks_section": "PISTAS", "search_placeholder": "Buscar artista o pista...",
+        "no_csv_msg": "No hay CSV cargado", "status_loaded": "{n} pistas cargadas",
+        "status_filtered": "{n} de {m} pistas",
+        "settings_section": "CONFIGURACION",
+        "dl_length_label": "Duracion de descarga (segundos)",
+        "offset_label": "Iniciar corte en (segundos)",
+        "duration_label": "Duracion del corte (segundos)",
+        "explain_text": (
+            "El corte extrae una seccion corta de cada vista previa descargada.\n"
+            "Desplazamiento = donde comienza el corte.   Duracion = cuanto dura cada grano."
+        ),
+        "step1_check": "Paso 1 - Descargar vistas previas de YouTube",
+        "step2_check": "Paso 2 - Cortar en granos",
+        "start_btn": "Iniciar", "stop_btn": "Detener",
+        "log_section": "REGISTRO",
     },
     "Deutsch": {
-        "window_title":   "Spotify Corpus Builder",
-        "files_frame":    "Dateien",
-        "language_label": "Sprache:",
-        "csv_label":      "CSV-Datei laden:",
-        "save_label":     "Speichern unter:",
-        "browse_btn":     "Durchsuchen...",
-        "tracks_frame":   "Titel",
-        "search_label":   "Suchen:",
-        "no_csv_msg":     "Keine CSV geladen",
-        "status_loaded":  "{n} Titel geladen",
-        "status_filtered":"{n} von {m} Titeln",
-        "settings_frame": "Einstellungen",
-        "dl_length_label":"Download-Länge (Sekunden):",
-        "offset_label":   "Schnitt starten bei (Sekunden):",
-        "duration_label": "Schnittlänge (Sekunden):",
-        "explain_text":   "Das Schneiden extrahiert einen kurzen Abschnitt aus jeder heruntergeladenen Vorschau.\n"
-                          "Versatz = wo der Schnitt beginnt.  "
-                          "Schnittlänge = wie lang jedes Korn ist.",
-        "step1_check":    "Schritt 1 - Vorschauen von YouTube herunterladen",
-        "step2_check":    "Schritt 2 - In Körner schneiden",
-        "log_frame":      "Protokoll",
-        "start_btn":      "Start",
-        "stop_btn":       "Stopp",
+        "window_title": "Spotify Corpus Builder",
+        "files_section": "DATEIEN", "language_label": "Sprache",
+        "theme_label": "Design", "csv_label": "CSV-Datei laden",
+        "save_label": "Speichern unter", "browse_btn": "Durchsuchen",
+        "tracks_section": "TITEL", "search_placeholder": "Kunstler oder Titel suchen...",
+        "no_csv_msg": "Keine CSV geladen", "status_loaded": "{n} Titel geladen",
+        "status_filtered": "{n} von {m} Titeln",
+        "settings_section": "EINSTELLUNGEN",
+        "dl_length_label": "Download-Lange (Sekunden)",
+        "offset_label": "Schnitt starten bei (Sekunden)",
+        "duration_label": "Schnittlange (Sekunden)",
+        "explain_text": (
+            "Das Schneiden extrahiert einen kurzen Abschnitt aus jeder Vorschau.\n"
+            "Versatz = wo der Schnitt beginnt.   Schnittlange = wie lang jedes Korn ist."
+        ),
+        "step1_check": "Schritt 1 - Vorschauen von YouTube herunterladen",
+        "step2_check": "Schritt 2 - In Korner schneiden",
+        "start_btn": "Start", "stop_btn": "Stopp",
+        "log_section": "PROTOKOLL",
     },
-    "中文": {
-        "window_title":   "Spotify 语料库构建器",
-        "files_frame":    "文件",
-        "language_label": "语言：",
-        "csv_label":      "加载 CSV 文件：",
-        "save_label":     "保存到：",
-        "browse_btn":     "浏览...",
-        "tracks_frame":   "曲目",
-        "search_label":   "搜索：",
-        "no_csv_msg":     "未加载 CSV",
-        "status_loaded":  "已加载 {n} 首曲目",
-        "status_filtered":"{n} / {m} 首曲目",
-        "settings_frame": "设置",
-        "dl_length_label":"下载时长（秒）：",
-        "offset_label":   "裁剪起始位置（秒）：",
-        "duration_label": "裁剪长度（秒）：",
-        "explain_text":   "切片功能将每个已下载的预览音频裁剪出一段短片段。\n"
-                          "偏移量 = 裁剪开始的时间点。  "
-                          "裁剪长度 = 每个音粒的持续时间。",
-        "step1_check":    "第一步 - 从 YouTube 下载预览",
-        "step2_check":    "第二步 - 切片成音粒",
-        "log_frame":      "日志",
-        "start_btn":      "开始",
-        "stop_btn":       "停止",
+    "Chinese": {
+        "window_title": "Spotify 语料库构建器",
+        "files_section": "文件", "language_label": "语言",
+        "theme_label": "主题", "csv_label": "加载 CSV 文件",
+        "save_label": "保存到", "browse_btn": "浏览",
+        "tracks_section": "曲目", "search_placeholder": "搜索艺术家或曲目...",
+        "no_csv_msg": "未加载 CSV", "status_loaded": "已加载 {n} 首曲目",
+        "status_filtered": "{n} / {m} 首曲目",
+        "settings_section": "设置",
+        "dl_length_label": "下载时长（秒）",
+        "offset_label": "裁剪起始位置（秒）",
+        "duration_label": "裁剪长度（秒）",
+        "explain_text": (
+            "切片功能将每个下载的预览音频裁剪成一段短片段。\n"
+            "偏移量 = 裁剪开始的时间点。   裁剪长度 = 每个音粒的持续时间。"
+        ),
+        "step1_check": "第一步 — 从 YouTube 下载预览",
+        "step2_check": "第二步 — 切片成音粒",
+        "start_btn": "开始", "stop_btn": "停止",
+        "log_section": "日志",
     },
-    "日本語": {
-        "window_title":   "Spotify コーパスビルダー",
-        "files_frame":    "ファイル",
-        "language_label": "言語：",
-        "csv_label":      "CSV ファイルを読み込む：",
-        "save_label":     "保存先：",
-        "browse_btn":     "参照...",
-        "tracks_frame":   "トラック",
-        "search_label":   "検索：",
-        "no_csv_msg":     "CSV が読み込まれていません",
-        "status_loaded":  "{n} トラック読み込み済み",
-        "status_filtered":"{m} 中 {n} トラック",
-        "settings_frame": "設定",
-        "dl_length_label":"ダウンロード長（秒）：",
-        "offset_label":   "カット開始位置（秒）：",
-        "duration_label": "カット長（秒）：",
-        "explain_text":   "スライスは各ダウンロードされたプレビューから短いセクションを切り出します。\n"
-                          "オフセット = カットが始まる位置。  "
-                          "カット長 = 各グレインの長さ。",
-        "step1_check":    "ステップ 1 - YouTube からプレビューをダウンロード",
-        "step2_check":    "ステップ 2 - グレインにスライス",
-        "log_frame":      "ログ",
-        "start_btn":      "開始",
-        "stop_btn":       "停止",
+    "Japanese": {
+        "window_title": "Spotify コーパスビルダー",
+        "files_section": "ファイル", "language_label": "言語",
+        "theme_label": "テーマ", "csv_label": "CSV ファイルを読み込む",
+        "save_label": "保存先", "browse_btn": "参照",
+        "tracks_section": "トラック", "search_placeholder": "アーティストまたはトラックを検索...",
+        "no_csv_msg": "CSV が読み込まれていません", "status_loaded": "{n} トラック読み込み済み",
+        "status_filtered": "{m} 中 {n} トラック",
+        "settings_section": "設定",
+        "dl_length_label": "ダウンロード長（秒）",
+        "offset_label": "カット開始位置（秒）",
+        "duration_label": "カット長（秒）",
+        "explain_text": (
+            "スライスは各プレビューから短いセクションを切り出します。\n"
+            "オフセット = カットが始まる位置。   カット長 = 各グレインの長さ。"
+        ),
+        "step1_check": "ステップ 1 — YouTube からプレビューをダウンロード",
+        "step2_check": "ステップ 2 — グレインにスライス",
+        "start_btn": "開始", "stop_btn": "停止",
+        "log_section": "ログ",
     },
 }
 
 
 def _load_translations():
-    """Merge translations.json (if present) into TRANSLATIONS. Any language works."""
     path = os.path.join(SCRIPT_DIR, "translations.json")
     if not os.path.isfile(path):
         return
@@ -353,7 +310,9 @@ def _load_translations():
         with open(path, encoding="utf-8") as f:
             extra = json.load(f)
         if isinstance(extra, dict):
-            TRANSLATIONS.update(extra)
+            for k, v in extra.items():
+                if not k.startswith("_"):
+                    TRANSLATIONS[k] = v
     except Exception:
         pass
 
@@ -361,7 +320,75 @@ def _load_translations():
 _load_translations()
 
 
-# ── GUI ───────────────────────────────────────────────────────────────────────
+# ── Theme system ──────────────────────────────────────────────────────────────
+
+def discover_themes() -> dict:
+    """Return {display_name: json_path} for all themes in themes/ folder."""
+    themes_dir = os.path.join(SCRIPT_DIR, "themes")
+    themes = {}
+    if os.path.isdir(themes_dir):
+        for fname in sorted(os.listdir(themes_dir)):
+            if fname.endswith(".json") and not fname.startswith("_"):
+                path = os.path.join(themes_dir, fname)
+                try:
+                    with open(path, encoding="utf-8") as f:
+                        data = json.load(f)
+                    display = data.get("_name", fname.replace(".json", "").replace("-", " ").title())
+                    themes[display] = path
+                except Exception:
+                    pass
+    return themes
+
+
+def load_config() -> dict:
+    path = os.path.join(SCRIPT_DIR, "config.json")
+    try:
+        with open(path, encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+
+def save_config(updates: dict):
+    path = os.path.join(SCRIPT_DIR, "config.json")
+    config = load_config()
+    config.update(updates)
+    try:
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(config, f, indent=2)
+    except Exception:
+        pass
+
+
+def apply_startup_theme():
+    """Call before any CTk widgets are created."""
+    try:
+        import customtkinter as ctk
+    except ImportError:
+        return
+
+    config  = load_config()
+    themes  = discover_themes()
+    chosen  = config.get("theme")
+
+    if chosen and chosen in themes:
+        theme_path = themes[chosen]
+        try:
+            with open(theme_path, encoding="utf-8") as f:
+                data = json.load(f)
+            mode = data.get("_appearance_mode", "Dark")
+            ctk.set_appearance_mode(mode)
+            ctk.set_default_color_theme(theme_path)
+            return
+        except Exception:
+            pass
+
+    # Default fallback
+    ctk.set_appearance_mode("Dark")
+    ctk.set_default_color_theme("blue")
+
+
+# ── GUI support ───────────────────────────────────────────────────────────────
 
 class _PrintRedirector:
     def __init__(self, log_queue: queue.Queue):
@@ -384,37 +411,44 @@ class _PrintRedirector:
         sys.stdout = self._orig
 
 
-def load_tracks_from_csv(path: str) -> tuple:
+def load_tracks_from_csv(path: str):
     try:
         tracks = []
         with open(path, newline="", encoding="utf-8-sig") as f:
-            reader = csv.DictReader(f)
-            for row in reader:
+            for row in csv.DictReader(f):
                 name   = _find_col(row, _TRACK_COLS).strip()
                 artist = _find_col(row, _ARTIST_COLS).strip()
                 if name and artist:
                     tracks.append({"artist": artist, "name": name})
         if not tracks:
-            return [], "No tracks found. Make sure the CSV has Track Name and Artist columns."
+            return [], "No tracks found. Check that the CSV has Track Name and Artist columns."
         return tracks, ""
     except Exception as e:
         return [], str(e)
 
 
+# ── Main UI class ─────────────────────────────────────────────────────────────
+
 class CorpusBuilderUI:
     def __init__(self, root):
-        import tkinter as tk
+        import customtkinter as ctk
+        from tkinter import ttk
 
-        self.root = root
-        self.root.resizable(True, True)
-        self.root.minsize(700, 620)
+        self.root  = root
+        self.ctk   = ctk
+        self._ttk  = ttk
 
         self._all_tracks = []
         self._log_queue  = queue.Queue()
         self._stop_event = threading.Event()
         self._running    = False
-        self._lang       = "English"
-        self._i18n       = {}  # key -> widget reference for live language updates
+
+        config       = load_config()
+        self._lang   = config.get("lang", "English")
+        self._themes = discover_themes()
+
+        self.root.title(self._T()["window_title"])
+        self.root.minsize(760, 680)
 
         self._build_ui()
         self._poll_log()
@@ -422,265 +456,337 @@ class CorpusBuilderUI:
     def _T(self) -> dict:
         return TRANSLATIONS.get(self._lang, TRANSLATIONS["English"])
 
-    def _cjk_font(self, lang: str):
-        if sys.platform != "win32":
-            return None
-        if lang == "中文":
-            return ("Microsoft YaHei", 9)
-        if lang == "日本語":
-            return ("Meiryo", 9)
-        return ("Segoe UI", 9)
-
-    # ── Build UI ──────────────────────────────────────────────────────────────
+    # ── Build ─────────────────────────────────────────────────────────────────
 
     def _build_ui(self):
-        import tkinter as tk
-        from tkinter import ttk
+        ctk = self.ctk
+        tk  = ctk  # alias for StringVar/BooleanVar
 
-        PAD = {"padx": 8, "pady": 4}
+        import tkinter as _tk
+        T = self._T()
 
-        # ── Files + language ──────────────────────────────────────────────
-        file_frame = ttk.LabelFrame(self.root, text="Files", padding=6)
-        file_frame.pack(fill="x", padx=10, pady=(10, 4))
-        file_frame.columnconfigure(1, weight=1)
-        self._i18n["files_frame"] = file_frame
+        self.root.grid_columnconfigure(0, weight=1)
+        self.root.grid_rowconfigure(2, weight=1)  # track list expands
 
-        # Language selector row
-        lang_row = ttk.Frame(file_frame)
-        lang_row.grid(row=0, column=0, columnspan=3, sticky="e", padx=8, pady=(0, 2))
-        lang_lbl = ttk.Label(lang_row, text="Language:")
-        lang_lbl.pack(side="left", padx=(0, 4))
-        self._i18n["language_label"] = lang_lbl
+        # ── Header bar ────────────────────────────────────────────────────
+        header = ctk.CTkFrame(self.root, corner_radius=0, height=48)
+        header.grid(row=0, column=0, sticky="ew", padx=0, pady=0)
+        header.grid_columnconfigure(1, weight=1)
+        header.grid_propagate(False)
 
-        self._lang_var = tk.StringVar(value="English")
-        lang_combo = ttk.Combobox(
-            lang_row,
-            textvariable=self._lang_var,
+        ctk.CTkLabel(
+            header,
+            text="Spotify Corpus Builder",
+            font=ctk.CTkFont(size=16, weight="bold"),
+        ).grid(row=0, column=0, padx=16, pady=8, sticky="w")
+
+        controls_right = ctk.CTkFrame(header, fg_color="transparent")
+        controls_right.grid(row=0, column=2, padx=12, pady=4, sticky="e")
+
+        # Theme selector
+        config   = load_config()
+        theme_names = list(self._themes.keys())
+        cur_theme   = config.get("theme", theme_names[0] if theme_names else "")
+
+        self._theme_label = ctk.CTkLabel(controls_right, text=T["theme_label"],
+                                         font=ctk.CTkFont(size=11))
+        self._theme_label.pack(side="left", padx=(0, 4))
+
+        self._theme_var = _tk.StringVar(value=cur_theme)
+        theme_combo = ctk.CTkComboBox(
+            controls_right,
+            variable=self._theme_var,
+            values=theme_names if theme_names else ["Default"],
+            width=130,
+            command=self._on_theme_change,
+        )
+        theme_combo.pack(side="left", padx=(0, 16))
+
+        # Language selector
+        self._lang_label = ctk.CTkLabel(controls_right, text=T["language_label"],
+                                        font=ctk.CTkFont(size=11))
+        self._lang_label.pack(side="left", padx=(0, 4))
+
+        self._lang_var = _tk.StringVar(value=self._lang)
+        lang_combo = ctk.CTkComboBox(
+            controls_right,
+            variable=self._lang_var,
             values=list(TRANSLATIONS.keys()),
-            state="readonly",
-            width=12,
+            width=120,
+            command=self._on_lang_change,
         )
         lang_combo.pack(side="left")
-        lang_combo.bind("<<ComboboxSelected>>", self._on_lang_change)
+
+        # ── Files section ─────────────────────────────────────────────────
+        self._files_label = ctk.CTkLabel(
+            self.root, text=T["files_section"],
+            font=ctk.CTkFont(size=11, weight="bold"),
+            text_color=("gray50", "gray60"),
+        )
+        self._files_label.grid(row=1, column=0, sticky="w", padx=18, pady=(14, 2))
+
+        files_frame = ctk.CTkFrame(self.root, corner_radius=8)
+        files_frame.grid(row=1, column=0, sticky="ew", padx=12, pady=(0, 4),
+                         ipadx=4, ipady=4)
+        files_frame.grid_columnconfigure(1, weight=1)
+        files_frame.grid_rowconfigure(0, minsize=4)
 
         # CSV row
-        csv_lbl = ttk.Label(file_frame, text="Load CSV File:")
-        csv_lbl.grid(row=1, column=0, sticky="w", **PAD)
-        self._i18n["csv_label"] = csv_lbl
+        self._csv_lbl = ctk.CTkLabel(files_frame, text=T["csv_label"],
+                                     font=ctk.CTkFont(size=12))
+        self._csv_lbl.grid(row=1, column=0, padx=(14, 8), pady=6, sticky="w")
 
-        self._csv_var = tk.StringVar()
-        ttk.Entry(file_frame, textvariable=self._csv_var, state="readonly").grid(
-            row=1, column=1, sticky="ew", **PAD)
+        self._csv_var = _tk.StringVar()
+        ctk.CTkEntry(files_frame, textvariable=self._csv_var, state="readonly",
+                     height=32).grid(row=1, column=1, padx=4, pady=6, sticky="ew")
 
-        csv_btn = ttk.Button(file_frame, text="Browse...", command=self._browse_csv)
-        csv_btn.grid(row=1, column=2, **PAD)
-        self._i18n["browse_btn_csv"] = csv_btn
+        self._csv_browse_btn = ctk.CTkButton(
+            files_frame, text=T["browse_btn"], width=90, height=32,
+            command=self._browse_csv)
+        self._csv_browse_btn.grid(row=1, column=2, padx=(4, 14), pady=6)
 
         # Output row
-        out_lbl = ttk.Label(file_frame, text="Save To:")
-        out_lbl.grid(row=2, column=0, sticky="w", **PAD)
-        self._i18n["save_label"] = out_lbl
+        self._save_lbl = ctk.CTkLabel(files_frame, text=T["save_label"],
+                                      font=ctk.CTkFont(size=12))
+        self._save_lbl.grid(row=2, column=0, padx=(14, 8), pady=6, sticky="w")
 
-        self._out_var = tk.StringVar(value=os.path.join(SCRIPT_DIR, "output"))
-        ttk.Entry(file_frame, textvariable=self._out_var).grid(
-            row=2, column=1, sticky="ew", **PAD)
+        self._out_var = _tk.StringVar(value=os.path.join(SCRIPT_DIR, "output"))
+        ctk.CTkEntry(files_frame, textvariable=self._out_var,
+                     height=32).grid(row=2, column=1, padx=4, pady=6, sticky="ew")
 
-        out_btn = ttk.Button(file_frame, text="Browse...", command=self._browse_output)
-        out_btn.grid(row=2, column=2, **PAD)
-        self._i18n["browse_btn_out"] = out_btn
+        self._out_browse_btn = ctk.CTkButton(
+            files_frame, text=T["browse_btn"], width=90, height=32,
+            command=self._browse_output)
+        self._out_browse_btn.grid(row=2, column=2, padx=(4, 14), pady=6)
 
-        # ── Track list ────────────────────────────────────────────────────
-        list_frame = ttk.LabelFrame(self.root, text="Tracks", padding=6)
-        list_frame.pack(fill="both", expand=True, padx=10, pady=4)
-        list_frame.columnconfigure(0, weight=1)
-        list_frame.rowconfigure(1, weight=1)
-        self._i18n["tracks_frame"] = list_frame
+        # ── Tracks section ────────────────────────────────────────────────
+        self._tracks_label = ctk.CTkLabel(
+            self.root, text=T["tracks_section"],
+            font=ctk.CTkFont(size=11, weight="bold"),
+            text_color=("gray50", "gray60"),
+        )
+        self._tracks_label.grid(row=2, column=0, sticky="nw", padx=18, pady=(10, 2))
 
-        search_row = ttk.Frame(list_frame)
-        search_row.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 4))
-        search_row.columnconfigure(1, weight=1)
+        tracks_outer = ctk.CTkFrame(self.root, corner_radius=8)
+        tracks_outer.grid(row=2, column=0, sticky="nsew", padx=12, pady=(20, 4))
+        tracks_outer.grid_columnconfigure(0, weight=1)
+        tracks_outer.grid_rowconfigure(1, weight=1)
 
-        search_lbl = ttk.Label(search_row, text="Search:")
-        search_lbl.pack(side="left", padx=(0, 4))
-        self._i18n["search_label"] = search_lbl
+        # Search bar
+        search_row = ctk.CTkFrame(tracks_outer, fg_color="transparent")
+        search_row.grid(row=0, column=0, sticky="ew", padx=10, pady=(10, 4))
+        search_row.grid_columnconfigure(0, weight=1)
 
-        self._search_var = tk.StringVar()
+        self._search_var = _tk.StringVar()
         self._search_var.trace_add("write", self._on_search)
-        ttk.Entry(search_row, textvariable=self._search_var).pack(
-            side="left", fill="x", expand=True)
+        search_entry = ctk.CTkEntry(
+            search_row,
+            textvariable=self._search_var,
+            placeholder_text=T["search_placeholder"],
+            height=34,
+        )
+        search_entry.grid(row=0, column=0, sticky="ew", padx=(0, 10))
 
-        self._count_label = ttk.Label(search_row, text="No CSV loaded")
-        self._count_label.pack(side="right", padx=8)
+        self._count_label = ctk.CTkLabel(
+            search_row, text=T["no_csv_msg"],
+            font=ctk.CTkFont(size=11),
+            text_color=("gray50", "gray55"),
+        )
+        self._count_label.grid(row=0, column=1, sticky="e")
 
-        cols = ("artist", "track")
-        self._tree = ttk.Treeview(list_frame, columns=cols, show="headings", height=12)
+        # Treeview (ttk, styled to match CTk)
+        tree_frame = ctk.CTkFrame(tracks_outer, fg_color="transparent")
+        tree_frame.grid(row=1, column=0, sticky="nsew", padx=10, pady=(0, 10))
+        tree_frame.grid_columnconfigure(0, weight=1)
+        tree_frame.grid_rowconfigure(0, weight=1)
+
+        self._style_treeview()
+
+        self._tree = self._ttk.Treeview(
+            tree_frame, columns=("artist", "track"),
+            show="headings", height=10, style="Corpus.Treeview")
         self._tree.heading("artist", text="Artist")
         self._tree.heading("track",  text="Track")
-        self._tree.column("artist", width=260, minwidth=120)
-        self._tree.column("track",  width=340, minwidth=120)
+        self._tree.column("artist", width=240, minwidth=100)
+        self._tree.column("track",  width=340, minwidth=100)
 
-        vsb = ttk.Scrollbar(list_frame, orient="vertical",   command=self._tree.yview)
-        hsb = ttk.Scrollbar(list_frame, orient="horizontal", command=self._tree.xview)
+        vsb = self._ttk.Scrollbar(tree_frame, orient="vertical",   command=self._tree.yview)
+        hsb = self._ttk.Scrollbar(tree_frame, orient="horizontal", command=self._tree.xview)
         self._tree.configure(yscrollcommand=vsb.set, xscrollcommand=hsb.set)
+        self._tree.grid(row=0, column=0, sticky="nsew")
+        vsb.grid(row=0, column=1, sticky="ns")
+        hsb.grid(row=1, column=0, sticky="ew")
 
-        self._tree.grid(row=1, column=0, sticky="nsew")
-        vsb.grid(row=1, column=1, sticky="ns")
-        hsb.grid(row=2, column=0, sticky="ew")
-
-        # ── Settings ──────────────────────────────────────────────────────
-        settings_frame = ttk.LabelFrame(self.root, text="Settings", padding=6)
-        settings_frame.pack(fill="x", padx=10, pady=4)
-        self._i18n["settings_frame"] = settings_frame
-
-        self._prev_len_var = tk.IntVar(value=30)
-        self._offset_var   = tk.DoubleVar(value=5.0)
-        self._duration_var = tk.DoubleVar(value=1.5)
-        self._do_download  = tk.BooleanVar(value=True)
-        self._do_slice     = tk.BooleanVar(value=True)
-
-        row1 = ttk.Frame(settings_frame)
-        row1.pack(fill="x")
-
-        dl_lbl = ttk.Label(row1, text="Download length (seconds):")
-        dl_lbl.pack(side="left", padx=(0, 4))
-        self._i18n["dl_length_label"] = dl_lbl
-        ttk.Spinbox(row1, from_=5, to=60, increment=5, textvariable=self._prev_len_var,
-                    width=5).pack(side="left", padx=(0, 16))
-
-        off_lbl = ttk.Label(row1, text="Start cut at (seconds in):")
-        off_lbl.pack(side="left", padx=(0, 4))
-        self._i18n["offset_label"] = off_lbl
-        ttk.Spinbox(row1, from_=0, to=55, increment=0.5, textvariable=self._offset_var,
-                    width=5, format="%.1f").pack(side="left", padx=(0, 16))
-
-        dur_lbl = ttk.Label(row1, text="Cut length (seconds):")
-        dur_lbl.pack(side="left", padx=(0, 4))
-        self._i18n["duration_label"] = dur_lbl
-        ttk.Spinbox(row1, from_=0.5, to=10, increment=0.5, textvariable=self._duration_var,
-                    width=5, format="%.1f").pack(side="left")
-
-        # Explanatory label
-        explain_lbl = ttk.Label(
-            settings_frame,
-            text=(
-                "Slicing takes each downloaded preview and cuts a short section from it.\n"
-                "Offset = where in the file the cut starts.  "
-                "Cut length = how long each grain is."
-            ),
-            foreground="#888888",
-            font=("TkDefaultFont", 8),
-            justify="left",
+        # ── Settings section ──────────────────────────────────────────────
+        self._settings_label = ctk.CTkLabel(
+            self.root, text=T["settings_section"],
+            font=ctk.CTkFont(size=11, weight="bold"),
+            text_color=("gray50", "gray60"),
         )
-        explain_lbl.pack(anchor="w", pady=(4, 2))
-        self._i18n["explain_text"] = explain_lbl
+        self._settings_label.grid(row=3, column=0, sticky="w", padx=18, pady=(10, 2))
 
-        row2 = ttk.Frame(settings_frame)
-        row2.pack(fill="x", pady=(4, 0))
+        settings_frame = ctk.CTkFrame(self.root, corner_radius=8)
+        settings_frame.grid(row=3, column=0, sticky="ew", padx=12, pady=(0, 4),
+                            ipadx=4, ipady=4)
 
-        step1_chk = ttk.Checkbutton(
-            row2, text="Step 1 - Download previews from YouTube",
-            variable=self._do_download)
-        step1_chk.pack(side="left", padx=(0, 20))
-        self._i18n["step1_check"] = step1_chk
+        import tkinter as _tk2
+        self._prev_len_var = _tk2.StringVar(value="30")
+        self._offset_var   = _tk2.StringVar(value="5.0")
+        self._duration_var = _tk2.StringVar(value="1.5")
+        self._do_download  = _tk2.BooleanVar(value=True)
+        self._do_slice     = _tk2.BooleanVar(value=True)
 
-        step2_chk = ttk.Checkbutton(
-            row2, text="Step 2 - Slice into grains",
-            variable=self._do_slice)
-        step2_chk.pack(side="left")
-        self._i18n["step2_check"] = step2_chk
+        params_row = ctk.CTkFrame(settings_frame, fg_color="transparent")
+        params_row.pack(fill="x", padx=12, pady=(10, 4))
 
-        # ── Controls ──────────────────────────────────────────────────────
-        ctrl_frame = ttk.Frame(self.root, padding=(10, 4))
-        ctrl_frame.pack(fill="x")
-        ctrl_frame.columnconfigure(2, weight=1)
+        def _param(parent, label_key, var, width=70):
+            f = ctk.CTkFrame(parent, fg_color="transparent")
+            lbl = ctk.CTkLabel(f, text=T[label_key], font=ctk.CTkFont(size=11))
+            lbl.pack(anchor="w")
+            entry = ctk.CTkEntry(f, textvariable=var, width=width, height=30,
+                                 justify="center")
+            entry.pack()
+            return f, lbl
 
-        self._start_btn = ttk.Button(ctrl_frame, text="Start", command=self._start,
-                                     state="disabled")
+        f1, self._dl_lbl    = _param(params_row, "dl_length_label", self._prev_len_var)
+        f2, self._off_lbl   = _param(params_row, "offset_label",    self._offset_var)
+        f3, self._dur_lbl   = _param(params_row, "duration_label",  self._duration_var)
+        for f in (f1, f2, f3):
+            f.pack(side="left", padx=(0, 24))
+
+        self._explain_lbl = ctk.CTkLabel(
+            settings_frame,
+            text=T["explain_text"],
+            font=ctk.CTkFont(size=10),
+            text_color=("gray55", "gray55"),
+            justify="left",
+            anchor="w",
+        )
+        self._explain_lbl.pack(fill="x", padx=14, pady=(2, 6))
+
+        steps_row = ctk.CTkFrame(settings_frame, fg_color="transparent")
+        steps_row.pack(fill="x", padx=12, pady=(0, 10))
+
+        self._step1_chk = ctk.CTkCheckBox(
+            steps_row, text=T["step1_check"],
+            variable=self._do_download, font=ctk.CTkFont(size=12))
+        self._step1_chk.pack(side="left", padx=(0, 24))
+
+        self._step2_chk = ctk.CTkCheckBox(
+            steps_row, text=T["step2_check"],
+            variable=self._do_slice, font=ctk.CTkFont(size=12))
+        self._step2_chk.pack(side="left")
+
+        # ── Action bar ────────────────────────────────────────────────────
+        action_bar = ctk.CTkFrame(self.root, fg_color="transparent")
+        action_bar.grid(row=4, column=0, sticky="ew", padx=12, pady=(4, 4))
+        action_bar.grid_columnconfigure(2, weight=1)
+
+        self._start_btn = ctk.CTkButton(
+            action_bar, text=T["start_btn"], width=100, height=36,
+            command=self._start, state="disabled",
+            font=ctk.CTkFont(size=13, weight="bold"))
         self._start_btn.grid(row=0, column=0, padx=(0, 8))
-        self._i18n["start_btn"] = self._start_btn
 
-        self._stop_btn = ttk.Button(ctrl_frame, text="Stop", command=self._stop,
-                                    state="disabled")
-        self._stop_btn.grid(row=0, column=1, sticky="w")
-        self._i18n["stop_btn"] = self._stop_btn
+        self._stop_btn = ctk.CTkButton(
+            action_bar, text=T["stop_btn"], width=100, height=36,
+            command=self._stop, state="disabled",
+            fg_color=("gray70", "gray30"), hover_color=("gray60", "gray40"),
+            font=ctk.CTkFont(size=13))
+        self._stop_btn.grid(row=0, column=1)
 
-        self._progress = ttk.Progressbar(ctrl_frame, mode="indeterminate")
-        self._progress.grid(row=0, column=2, sticky="ew", padx=(8, 0))
+        self._progress = ctk.CTkProgressBar(action_bar, mode="indeterminate", height=8)
+        self._progress.grid(row=0, column=2, sticky="ew", padx=(16, 0))
+        self._progress.set(0)
 
-        # ── Log ───────────────────────────────────────────────────────────
-        import tkinter.scrolledtext as st
-        log_frame = ttk.LabelFrame(self.root, text="Log", padding=6)
-        log_frame.pack(fill="both", expand=False, padx=10, pady=(4, 10))
-        self._i18n["log_frame"] = log_frame
+        # ── Log section ───────────────────────────────────────────────────
+        self._log_label = ctk.CTkLabel(
+            self.root, text=T["log_section"],
+            font=ctk.CTkFont(size=11, weight="bold"),
+            text_color=("gray50", "gray60"),
+        )
+        self._log_label.grid(row=5, column=0, sticky="w", padx=18, pady=(6, 2))
 
-        self._log_area = st.ScrolledText(
-            log_frame, height=10, state="disabled",
-            font=("Courier", 10), wrap="none")
-        self._log_area.pack(fill="both", expand=True)
+        log_frame = ctk.CTkFrame(self.root, corner_radius=8)
+        log_frame.grid(row=5, column=0, sticky="ew", padx=12, pady=(0, 12))
 
-        # Apply initial language
-        self._apply_language("English")
+        self._log_area = ctk.CTkTextbox(
+            log_frame, height=160, state="disabled",
+            font=ctk.CTkFont(family="Courier", size=11), wrap="none")
+        self._log_area.pack(fill="both", expand=True, padx=4, pady=4)
 
-    # ── Language ──────────────────────────────────────────────────────────────
+    def _style_treeview(self):
+        """Style the ttk Treeview to match the current CTk theme."""
+        import customtkinter as ctk
+        from tkinter import ttk
 
-    def _on_lang_change(self, *_):
-        self._apply_language(self._lang_var.get())
+        try:
+            from customtkinter.windows.widgets.theme import ThemeManager
+            mode_idx = 1 if ctk.get_appearance_mode() == "Dark" else 0
 
-    def _apply_language(self, lang: str):
+            def _color(key, prop):
+                val = ThemeManager.theme.get(key, {}).get(prop, "#333333")
+                if isinstance(val, list):
+                    return val[mode_idx]
+                return val
+
+            bg     = _color("CTkTextbox", "fg_color")
+            fg     = _color("CTkLabel", "text_color")
+            sel    = _color("CTkButton", "fg_color")
+            head   = _color("CTkFrame", "top_fg_color")
+        except Exception:
+            mode = ctk.get_appearance_mode()
+            bg   = "#1e1e1e" if mode == "Dark" else "#f5f5f5"
+            fg   = "#e0e0e0" if mode == "Dark" else "#1a1a1a"
+            sel  = "#1F6AA5" if mode == "Dark" else "#3B8ED0"
+            head = "#2e2e2e" if mode == "Dark" else "#e8e8e8"
+
+        style = self._ttk.Style()
+        style.configure("Corpus.Treeview",
+            background=bg, foreground=fg, fieldbackground=bg,
+            borderwidth=0, rowheight=28)
+        style.configure("Corpus.Treeview.Heading",
+            background=head, foreground=fg, borderwidth=0, relief="flat")
+        style.map("Corpus.Treeview",
+            background=[("selected", sel)],
+            foreground=[("selected", "#ffffff")])
+
+    # ── Theme / language ──────────────────────────────────────────────────────
+
+    def _on_theme_change(self, theme_name: str):
+        save_config({"theme": theme_name, "lang": self._lang})
+        # Relaunch with new theme applied before any widgets are created
+        subprocess.Popen([sys.executable] + sys.argv)
+        self.root.after(50, self.root.destroy)
+
+    def _on_lang_change(self, lang: str):
         self._lang = lang
+        save_config({"lang": lang})
         T = self._T()
 
         self.root.title(T["window_title"])
+        self._files_label.configure(text=T["files_section"])
+        self._tracks_label.configure(text=T["tracks_section"])
+        self._settings_label.configure(text=T["settings_section"])
+        self._log_label.configure(text=T["log_section"])
+        self._lang_label.configure(text=T["language_label"])
+        self._theme_label.configure(text=T["theme_label"])
+        self._csv_lbl.configure(text=T["csv_label"])
+        self._save_lbl.configure(text=T["save_label"])
+        self._csv_browse_btn.configure(text=T["browse_btn"])
+        self._out_browse_btn.configure(text=T["browse_btn"])
+        self._dl_lbl.configure(text=T["dl_length_label"])
+        self._off_lbl.configure(text=T["offset_label"])
+        self._dur_lbl.configure(text=T["duration_label"])
+        self._explain_lbl.configure(text=T["explain_text"])
+        self._step1_chk.configure(text=T["step1_check"])
+        self._step2_chk.configure(text=T["step2_check"])
+        self._start_btn.configure(text=T["start_btn"])
+        self._stop_btn.configure(text=T["stop_btn"])
 
-        # Update all labelled widgets
-        label_map = {
-            "files_frame":    "files_frame",
-            "language_label": "language_label",
-            "csv_label":      "csv_label",
-            "save_label":     "save_label",
-            "browse_btn_csv": "browse_btn",
-            "browse_btn_out": "browse_btn",
-            "tracks_frame":   "tracks_frame",
-            "search_label":   "search_label",
-            "settings_frame": "settings_frame",
-            "dl_length_label":"dl_length_label",
-            "offset_label":   "offset_label",
-            "duration_label": "duration_label",
-            "explain_text":   "explain_text",
-            "step1_check":    "step1_check",
-            "step2_check":    "step2_check",
-            "log_frame":      "log_frame",
-            "start_btn":      "start_btn",
-            "stop_btn":       "stop_btn",
-        }
-
-        for widget_key, trans_key in label_map.items():
-            widget = self._i18n.get(widget_key)
-            if widget and trans_key in T:
-                try:
-                    widget.config(text=T[trans_key])
-                except Exception:
-                    pass
-
-        # Update font for CJK rendering on Windows
-        font = self._cjk_font(lang)
-        if font:
-            for widget in self._i18n.values():
-                try:
-                    widget.config(font=font)
-                except Exception:
-                    pass
-
-        # Refresh count label
         n = len(self._all_tracks)
-        if n > 0:
-            self._count_label.config(text=T["status_loaded"].format(n=n))
-        else:
-            self._count_label.config(text=T["no_csv_msg"])
-
-        # Keep language combobox updated with all available languages
-        # (in case translations.json was loaded after build)
-        pass
+        self._count_label.configure(
+            text=T["status_loaded"].format(n=n) if n else T["no_csv_msg"])
 
     # ── File pickers ──────────────────────────────────────────────────────────
 
@@ -700,38 +806,37 @@ class CorpusBuilderUI:
         if path:
             self._out_var.set(path)
 
-    # ── CSV loading + search ──────────────────────────────────────────────────
+    # ── CSV + search ──────────────────────────────────────────────────────────
 
     def _load_csv(self, path: str):
         tracks, err = load_tracks_from_csv(path)
         T = self._T()
         if err:
-            self._count_label.config(text=f"Error: {err}")
+            self._count_label.configure(text=f"Error: {err}")
             self._all_tracks = []
             self._refresh_tree([])
-            self._start_btn.config(state="disabled")
+            self._start_btn.configure(state="disabled")
             return
-
         self._all_tracks = tracks
         self._search_var.set("")
         self._refresh_tree(tracks)
-        self._count_label.config(text=T["status_loaded"].format(n=len(tracks)))
-        self._start_btn.config(state="normal")
+        self._count_label.configure(text=T["status_loaded"].format(n=len(tracks)))
+        self._start_btn.configure(state="normal")
 
     def _on_search(self, *_):
         T = self._T()
-        query = self._search_var.get().lower()
-        if not query:
+        q = self._search_var.get().lower()
+        if not q:
             self._refresh_tree(self._all_tracks)
-            self._count_label.config(
+            self._count_label.configure(
                 text=T["status_loaded"].format(n=len(self._all_tracks)))
             return
         filtered = [
             t for t in self._all_tracks
-            if query in t["artist"].lower() or query in t["name"].lower()
+            if q in t["artist"].lower() or q in t["name"].lower()
         ]
         self._refresh_tree(filtered)
-        self._count_label.config(
+        self._count_label.configure(
             text=T["status_filtered"].format(n=len(filtered), m=len(self._all_tracks)))
 
     def _refresh_tree(self, tracks: list):
@@ -742,13 +847,11 @@ class CorpusBuilderUI:
     # ── Run ───────────────────────────────────────────────────────────────────
 
     def _start(self):
-        if not self._csv_var.get():
-            return
         self._stop_event.clear()
         self._running = True
-        self._start_btn.config(state="disabled")
-        self._stop_btn.config(state="normal")
-        self._progress.start(12)
+        self._start_btn.configure(state="disabled")
+        self._stop_btn.configure(state="normal")
+        self._progress.start()
         self._log_write("--- Starting ---")
         threading.Thread(target=self._run_thread, daemon=True).start()
 
@@ -762,21 +865,25 @@ class CorpusBuilderUI:
         previews_dir = os.path.join(output_root, "previews")
         grains_dir   = os.path.join(output_root, "grains")
 
+        try:
+            prev_len = int(self._prev_len_var.get())
+            offset   = float(self._offset_var.get())
+            duration = float(self._duration_var.get())
+        except ValueError:
+            self._log_write("ERROR: Invalid number in settings — check Download length, Offset, and Duration.")
+            self.root.after(0, self._on_done)
+            return
+
         with _PrintRedirector(self._log_queue):
             try:
                 if self._do_download.get():
-                    run_download(csv_path, previews_dir,
-                                 self._prev_len_var.get(), self._stop_event)
-
+                    run_download(csv_path, previews_dir, prev_len, self._stop_event)
                 if self._do_slice.get() and not self._stop_event.is_set():
                     if os.path.isdir(previews_dir):
-                        run_slice(previews_dir, grains_dir,
-                                  self._offset_var.get(), self._duration_var.get(),
-                                  self._stop_event)
+                        run_slice(previews_dir, grains_dir, offset, duration, self._stop_event)
                     else:
-                        print("No previews folder found - run with Download enabled first.")
-
-                print(f"\nAll done.  Previews: {previews_dir}  Grains: {grains_dir}")
+                        print("No previews folder found — run with Download enabled first.")
+                print(f"\nAll done.  Previews: {previews_dir}  |  Grains: {grains_dir}")
             except Exception as e:
                 print(f"ERROR: {e}")
 
@@ -785,8 +892,9 @@ class CorpusBuilderUI:
     def _on_done(self):
         self._running = False
         self._progress.stop()
-        self._start_btn.config(state="normal")
-        self._stop_btn.config(state="disabled")
+        self._progress.set(0)
+        self._start_btn.configure(state="normal")
+        self._stop_btn.configure(state="disabled")
 
     # ── Log ───────────────────────────────────────────────────────────────────
 
@@ -797,10 +905,10 @@ class CorpusBuilderUI:
         try:
             while True:
                 msg = self._log_queue.get_nowait()
-                self._log_area.config(state="normal")
+                self._log_area.configure(state="normal")
                 self._log_area.insert("end", msg + "\n")
                 self._log_area.see("end")
-                self._log_area.config(state="disabled")
+                self._log_area.configure(state="disabled")
         except queue.Empty:
             pass
         self.root.after(100, self._poll_log)
@@ -810,16 +918,20 @@ class CorpusBuilderUI:
 
 def main():
     if len(sys.argv) == 1:
-        import tkinter as tk
-        root = tk.Tk()
+        try:
+            import customtkinter as ctk
+        except ImportError:
+            print("ERROR: customtkinter not installed. Run: pip install customtkinter")
+            sys.exit(1)
+
+        apply_startup_theme()
+        root = ctk.CTk()
         CorpusBuilderUI(root)
         root.mainloop()
         return
 
     parser = argparse.ArgumentParser(
-        description="Download Spotify preview clips and slice them into short grains.",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-    )
+        description="Download Spotify preview clips and slice them into short grains.")
     parser.add_argument("--csv",            default=os.path.join(SCRIPT_DIR, "Liked_Songs.csv"))
     parser.add_argument("--output",         default=os.path.join(SCRIPT_DIR, "output"))
     parser.add_argument("--preview-length", type=int,   default=30)
@@ -844,7 +956,7 @@ def main():
             sys.exit(1)
         run_slice(previews_dir, grains_dir, args.offset, args.duration)
 
-    print(f"\nAll done.  Previews: {previews_dir}  Grains: {grains_dir}")
+    print(f"\nAll done.  Previews: {previews_dir}  |  Grains: {grains_dir}")
 
 
 if __name__ == "__main__":
