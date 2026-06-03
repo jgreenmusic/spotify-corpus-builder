@@ -198,7 +198,7 @@ TRANSLATIONS = {
         "window_title": "Spotify Corpus Builder",
         "app_description": "Load a Spotify CSV, download audio previews from YouTube, and slice them into short grains for use as a sample corpus.",
         "files_section": "FILES", "language_label": "Language",
-        "theme_label": "Theme", "csv_label": "Load CSV File",
+        "csv_label": "Load CSV File",
         "save_label": "Save To", "browse_btn": "Browse",
         "tracks_section": "TRACKS", "search_placeholder": "Search artist or track...",
         "no_csv_msg": "No CSV loaded", "status_loaded": "{n} tracks loaded",
@@ -220,7 +220,7 @@ TRANSLATIONS = {
         "window_title": "Constructor de Corpus de Spotify",
         "app_description": "Carga un CSV de Spotify, descarga vistas previas de audio de YouTube y cortalas en granos cortos para usar como corpus de muestras.",
         "files_section": "ARCHIVOS", "language_label": "Idioma",
-        "theme_label": "Tema", "csv_label": "Cargar archivo CSV",
+        "csv_label": "Cargar archivo CSV",
         "save_label": "Guardar en", "browse_btn": "Explorar",
         "tracks_section": "PISTAS", "search_placeholder": "Buscar artista o pista...",
         "no_csv_msg": "No hay CSV cargado", "status_loaded": "{n} pistas cargadas",
@@ -242,7 +242,7 @@ TRANSLATIONS = {
         "window_title": "Spotify Corpus Builder",
         "app_description": "Lade eine Spotify-CSV, lade Audio-Vorschauen von YouTube herunter und schneide sie in kurze Korner fur einen Sample-Corpus.",
         "files_section": "DATEIEN", "language_label": "Sprache",
-        "theme_label": "Design", "csv_label": "CSV-Datei laden",
+        "csv_label": "CSV-Datei laden",
         "save_label": "Speichern unter", "browse_btn": "Durchsuchen",
         "tracks_section": "TITEL", "search_placeholder": "Kunstler oder Titel suchen...",
         "no_csv_msg": "Keine CSV geladen", "status_loaded": "{n} Titel geladen",
@@ -264,7 +264,7 @@ TRANSLATIONS = {
         "window_title": "Spotify 语料库构建器",
         "app_description": "加载 Spotify CSV，从 YouTube 下载音频预览，并将其切割成短片段，用作采样语料库。",
         "files_section": "文件", "language_label": "语言",
-        "theme_label": "主题", "csv_label": "加载 CSV 文件",
+        "csv_label": "加载 CSV 文件",
         "save_label": "保存到", "browse_btn": "浏览",
         "tracks_section": "曲目", "search_placeholder": "搜索艺术家或曲目...",
         "no_csv_msg": "未加载 CSV", "status_loaded": "已加载 {n} 首曲目",
@@ -286,7 +286,7 @@ TRANSLATIONS = {
         "window_title": "Spotify コーパスビルダー",
         "app_description": "Spotify の CSV を読み込み、YouTube から音声プレビューをダウンロードし、サンプルコーパス用の短いグレインにスライスします。",
         "files_section": "ファイル", "language_label": "言語",
-        "theme_label": "テーマ", "csv_label": "CSV ファイルを読み込む",
+        "csv_label": "CSV ファイルを読み込む",
         "save_label": "保存先", "browse_btn": "参照",
         "tracks_section": "トラック", "search_placeholder": "アーティストまたはトラックを検索...",
         "no_csv_msg": "CSV が読み込まれていません", "status_loaded": "{n} トラック読み込み済み",
@@ -327,24 +327,6 @@ _load_translations()
 
 # ── Theme system ──────────────────────────────────────────────────────────────
 
-def discover_themes() -> dict:
-    """Return {display_name: json_path} for all themes in themes/ folder."""
-    themes_dir = os.path.join(SCRIPT_DIR, "themes")
-    themes = {}
-    if os.path.isdir(themes_dir):
-        for fname in sorted(os.listdir(themes_dir)):
-            if fname.endswith(".json") and not fname.startswith("_"):
-                path = os.path.join(themes_dir, fname)
-                try:
-                    with open(path, encoding="utf-8") as f:
-                        data = json.load(f)
-                    display = data.get("_name", fname.replace(".json", "").replace("-", " ").title())
-                    themes[display] = path
-                except Exception:
-                    pass
-    return themes
-
-
 def load_config() -> dict:
     path = os.path.join(SCRIPT_DIR, "config.json")
     try:
@@ -371,24 +353,6 @@ def apply_startup_theme():
         import customtkinter as ctk
     except ImportError:
         return
-
-    config  = load_config()
-    themes  = discover_themes()
-    chosen  = config.get("theme")
-
-    if chosen and chosen in themes:
-        theme_path = themes[chosen]
-        try:
-            with open(theme_path, encoding="utf-8") as f:
-                data = json.load(f)
-            mode = data.get("_appearance_mode", "Dark")
-            ctk.set_appearance_mode(mode)
-            ctk.set_default_color_theme(theme_path)
-            return
-        except Exception:
-            pass
-
-    # Default fallback
     ctk.set_appearance_mode("Dark")
     ctk.set_default_color_theme("blue")
 
@@ -450,7 +414,6 @@ class CorpusBuilderUI:
 
         config       = load_config()
         self._lang   = config.get("lang", "English")
-        self._themes = discover_themes()
 
         self.root.title(self._T()["window_title"])
         self.root.minsize(760, 680)
@@ -500,25 +463,6 @@ class CorpusBuilderUI:
 
         controls_right = ctk.CTkFrame(header, fg_color="transparent")
         controls_right.grid(row=0, column=2, padx=12, pady=4, sticky="e")
-
-        # Theme selector
-        config   = load_config()
-        theme_names = list(self._themes.keys())
-        cur_theme   = config.get("theme", theme_names[0] if theme_names else "")
-
-        self._theme_label = ctk.CTkLabel(controls_right, text=T["theme_label"],
-                                         font=ctk.CTkFont(size=11))
-        self._theme_label.pack(side="left", padx=(0, 4))
-
-        self._theme_var = _tk.StringVar(value=cur_theme)
-        theme_combo = ctk.CTkComboBox(
-            controls_right,
-            variable=self._theme_var,
-            values=theme_names if theme_names else ["Default"],
-            width=130,
-            command=self._on_theme_change,
-        )
-        theme_combo.pack(side="left", padx=(0, 16))
 
         # Language selector
         self._lang_label = ctk.CTkLabel(controls_right, text=T["language_label"],
@@ -771,12 +715,6 @@ class CorpusBuilderUI:
 
     # ── Theme / language ──────────────────────────────────────────────────────
 
-    def _on_theme_change(self, theme_name: str):
-        save_config({"theme": theme_name, "lang": self._lang})
-        # Relaunch with new theme applied before any widgets are created
-        subprocess.Popen([sys.executable] + sys.argv)
-        self.root.after(50, self.root.destroy)
-
     def _on_lang_change(self, lang: str):
         self._lang = lang
         save_config({"lang": lang})
@@ -788,7 +726,6 @@ class CorpusBuilderUI:
         self._settings_label.configure(text=T["settings_section"])
         self._log_label.configure(text=T["log_section"])
         self._lang_label.configure(text=T["language_label"])
-        self._theme_label.configure(text=T["theme_label"])
         self._csv_lbl.configure(text=T["csv_label"])
         self._save_lbl.configure(text=T["save_label"])
         self._csv_browse_btn.configure(text=T["browse_btn"])
@@ -801,7 +738,7 @@ class CorpusBuilderUI:
         self._step2_chk.configure(text=T["step2_check"])
         self._start_btn.configure(text=T["start_btn"])
         self._stop_btn.configure(text=T["stop_btn"])
-        self._desc_label.configure(text=T["app_description"])
+        self._desc_label.configure(text=T.get("app_description", ""))
 
         n = len(self._all_tracks)
         self._count_label.configure(
