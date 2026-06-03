@@ -1,0 +1,40 @@
+name: Build executables
+
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - os: windows-latest
+            artifact: spotify_corpus_builder.exe
+          - os: macos-latest
+            artifact: spotify_corpus_builder
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install pyinstaller yt-dlp
+
+      - name: Build executable
+        run: pyinstaller --onefile --name spotify_corpus_builder spotify_corpus_builder.py
+
+      - name: Upload to release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/${{ matrix.artifact }}
+            Liked_Songs.csv
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
