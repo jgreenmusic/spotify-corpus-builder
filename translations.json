@@ -24,6 +24,13 @@
     "step1_check":     "Étape 1 - Télécharger les aperçus depuis YouTube",
     "step2_check":     "Étape 2 - Découper en grains",
     "youtube_note":    "Note : Cette application n'utilise pas l'API Spotify et ne télécharge pas l'audio officiel Spotify. Elle recherche sur YouTube par nom d'artiste et titre, et télécharge les N premières secondes du résultat. La plupart des pistes correspondent correctement, mais certaines peuvent retourner un enregistrement live, une reprise ou une version alternative.",
+    "ai_section":            "ANALYSE IA",
+    "smart_grain_check":     "Sélection intelligente du grain  (trouve le meilleur moment automatiquement)",
+    "detect_versions_check": "Signaler les mauvaises versions  (enregistrements live, reprises)",
+    "extract_features_check":"Extraire les caractéristiques audio  (tempo, énergie, tonalité par piste)",
+    "cluster_check":         "Regrouper le corpus par similarité  (groupe les grains après découpage)",
+    "clap_check":            "Embeddings CLAP  (optionnel — nécessite laion-clap, 2Go de modèle)",
+    "ai_requires_note":      "L'analyse intelligente nécessite librosa. Lancez setup.sh pour l'installer.",
     "start_btn":       "Démarrer",
     "stop_btn":        "Arrêter",
     "log_section":     "JOURNAL"

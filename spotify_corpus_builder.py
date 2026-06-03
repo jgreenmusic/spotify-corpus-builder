@@ -10,6 +10,10 @@ Prerequisites:
       Windows: winget install ffmpeg
       Mac:     brew install ffmpeg
 
+AI analysis (optional):
+    pip install librosa scikit-learn soundfile numpy
+    (included in setup.bat / setup.sh)
+
 GUI usage (default):
     Windows:   python  spotify_corpus_builder.py
     Mac/Linux: python3 spotify_corpus_builder.py
@@ -40,6 +44,8 @@ try:
 except ImportError:
     print("yt-dlp is not installed. Run setup.bat (Windows) or setup.sh (Mac) to fix this.")
     sys.exit(1)
+
+_strategy_wins = {"energy": 0, "onsets": 0, "spectral": 0}
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -117,7 +123,8 @@ def download_track(artist: str, name: str, wav_path: str, preview_length: int) -
 
 
 def run_download(csv_path: str, previews_dir: str, preview_length: int,
-                 stop_event: threading.Event = None):
+                 stop_event: threading.Event = None, ai_opts: dict = None,
+                 metadata: dict = None):
     os.makedirs(previews_dir, exist_ok=True)
     tracks = []
     with open(csv_path, newline="", encoding="utf-8-sig") as f:
@@ -131,6 +138,13 @@ def run_download(csv_path: str, previews_dir: str, preview_length: int,
     print(f"Output: {previews_dir}\n")
     downloaded = skipped = failed = 0
 
+    ai_opts = ai_opts or {}
+    if metadata is None:
+        metadata = {}
+
+    ai_active = any(ai_opts.get(k) for k in ["smart_grain", "detect_versions", "extract_features"])
+    librosa_ok = _check_librosa() if ai_active else False
+
     for i, track in enumerate(tracks, 1):
         if stop_event and stop_event.is_set():
             print("\nStopped by user.")
@@ -140,11 +154,15 @@ def run_download(csv_path: str, previews_dir: str, preview_length: int,
         if os.path.exists(wav_path):
             print(f"  [{i}/{len(tracks)}] [exists]  {filename}.wav")
             skipped += 1
+            if librosa_ok and filename not in metadata:
+                _run_ai_on_track(wav_path, filename, ai_opts, metadata)
             continue
         print(f"  [{i}/{len(tracks)}] [fetch]   {track['artist']} - {track['name']}")
         if download_track(track["artist"], track["name"], wav_path, preview_length):
             print(f"  [{i}/{len(tracks)}] [done]    {filename}.wav")
             downloaded += 1
+            if librosa_ok:
+                _run_ai_on_track(wav_path, filename, ai_opts, metadata)
         else:
             print(f"  [{i}/{len(tracks)}] [failed]  {track['artist']} - {track['name']}")
             failed += 1
@@ -162,13 +180,20 @@ def slice_preview(src: str, dst: str, offset: float, duration: float, ffmpeg: st
 
 
 def run_slice(previews_dir: str, grains_dir: str, offset: float, duration: float,
-              stop_event: threading.Event = None):
+              stop_event: threading.Event = None, ai_opts: dict = None,
+              metadata: dict = None):
     os.makedirs(grains_dir, exist_ok=True)
     ffmpeg = ffmpeg_bin()
     wav_files = sorted(f for f in os.listdir(previews_dir) if f.lower().endswith(".wav"))
     total = len(wav_files)
 
+    ai_opts = ai_opts or {}
+    metadata = metadata or {}
+    use_smart = ai_opts.get("smart_grain") and metadata
+
     print(f"\n=== SLICE ({total} files -> offset {offset}s, grain {duration}s) ===")
+    if use_smart:
+        print("  Smart grain selection ON — using AI-suggested offsets where available.")
     print(f"Output: {grains_dir}\n")
     done = skipped = failed = 0
 
@@ -182,7 +207,15 @@ def run_slice(previews_dir: str, grains_dir: str, offset: float, duration: float
             print(f"  [{i}/{total}] [exists]  {fname}")
             skipped += 1
             continue
-        if slice_preview(src, dst, offset, duration, ffmpeg):
+
+        track_key = fname[:-4] if fname.lower().endswith(".wav") else fname
+        effective_offset = offset
+        if use_smart and track_key in metadata:
+            suggested = metadata[track_key].get("suggested_offset")
+            if suggested is not None:
+                effective_offset = suggested
+
+        if slice_preview(src, dst, effective_offset, duration, ffmpeg):
             print(f"  [{i}/{total}] [sliced]  {fname}")
             done += 1
         else:
@@ -190,6 +223,260 @@ def run_slice(previews_dir: str, grains_dir: str, offset: float, duration: float
             failed += 1
 
     print(f"\nSlice complete - sliced: {done}  skipped: {skipped}  failed: {failed}")
+
+
+# ── AI Analysis ───────────────────────────────────────────────────────────────
+
+def _check_librosa() -> bool:
+    try:
+        import librosa  # noqa: F401
+        return True
+    except ImportError:
+        print("  [AI] librosa is not installed. Run setup.bat or setup.sh to enable AI analysis.")
+        return False
+
+
+def _run_ai_on_track(wav_path: str, filename: str, ai_opts: dict, metadata: dict):
+    entry = metadata.setdefault(filename, {})
+    if ai_opts.get("extract_features"):
+        feats = analyze_audio(wav_path)
+        if feats:
+            entry["features"] = feats
+            print(f"  [AI] {filename[:50]}: tempo={feats.get('tempo', 0):.0f} key={feats.get('estimated_key', '?')}")
+    if ai_opts.get("smart_grain"):
+        duration = ai_opts.get("duration", 1.5)
+        offset = find_best_grain(wav_path, duration)
+        entry["suggested_offset"] = offset
+    if ai_opts.get("detect_versions"):
+        result = detect_wrong_version(wav_path)
+        entry["version_flag"] = result.get("flag", "ok")
+        entry["version_confidence"] = result.get("confidence", 0.0)
+        if result.get("flag", "ok") != "ok":
+            print(f"  [AI] {filename[:50]}: [{result['flag']}] conf={result['confidence']:.2f}")
+
+
+def analyze_audio(wav_path: str) -> dict:
+    try:
+        import librosa
+        import numpy as np
+        y, sr = librosa.load(wav_path, sr=None, mono=True)
+        tempo, _ = librosa.beat.beat_track(y=y, sr=sr)
+        rms = float(np.mean(librosa.feature.rms(y=y)))
+        sc = float(np.mean(librosa.feature.spectral_centroid(y=y, sr=sr)))
+        zcr = float(np.mean(librosa.feature.zero_crossing_rate(y)))
+        chroma = librosa.feature.chroma_cqt(y=y, sr=sr)
+        key_idx = int(np.argmax(np.mean(chroma, axis=1)))
+        keys = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
+        return {
+            "tempo": float(tempo),
+            "rms_energy": rms,
+            "spectral_centroid": sc,
+            "zero_crossing_rate": zcr,
+            "estimated_key": keys[key_idx],
+        }
+    except Exception:
+        return {}
+
+
+def find_best_grain(wav_path: str, duration: float) -> float:
+    try:
+        import librosa
+        import numpy as np
+        y, sr = librosa.load(wav_path, sr=None, mono=True)
+        total_dur = len(y) / sr
+        margin = 2.0
+
+        if total_dur < duration + 2 * margin:
+            return max(0.0, total_dur / 4)
+
+        hop = 512
+        win_f = max(1, int(duration * sr) // hop)
+        start_f = int(margin * sr) // hop
+        end_f = int((total_dur - margin - duration) * sr) // hop
+
+        if start_f >= end_f:
+            return margin
+
+        n = min(end_f, len(librosa.feature.rms(y=y, hop_length=hop)[0]) - win_f)
+
+        # Strategy 1: max RMS energy
+        rms = librosa.feature.rms(y=y, hop_length=hop)[0]
+        energy_scores = [float(np.mean(rms[i:i + win_f])) for i in range(start_f, n)]
+        best_e_i = int(np.argmax(energy_scores)) if energy_scores else 0
+        mean_e = float(np.mean(energy_scores)) if energy_scores else 1e-9
+        energy_conf = (energy_scores[best_e_i] - mean_e) / (mean_e + 1e-9) if energy_scores else 0.0
+
+        # Strategy 2: max onset density
+        onset_frames = librosa.onset.onset_detect(y=y, sr=sr, hop_length=hop)
+        onset_counts = [int(np.sum((onset_frames >= i) & (onset_frames < i + win_f)))
+                        for i in range(start_f, n)]
+        best_o_i = int(np.argmax(onset_counts)) if onset_counts else 0
+        mean_o = float(np.mean(onset_counts)) if onset_counts else 0.0
+        onset_conf = (onset_counts[best_o_i] - mean_o) / (mean_o + 1.0) if onset_counts else 0.0
+
+        # Strategy 3: max spectral centroid variance
+        sc_frames = librosa.feature.spectral_centroid(y=y, sr=sr, hop_length=hop)[0]
+        sc_n = min(n, len(sc_frames) - win_f)
+        sc_scores = [float(np.var(sc_frames[i:i + win_f])) for i in range(start_f, sc_n)]
+        best_sc_i = int(np.argmax(sc_scores)) if sc_scores else 0
+        mean_sc = float(np.mean(sc_scores)) if sc_scores else 1e-9
+        sc_conf = (sc_scores[best_sc_i] - mean_sc) / (mean_sc + 1e-9) if sc_scores else 0.0
+
+        strategies = {
+            "energy":   (best_e_i,  energy_conf),
+            "onsets":   (best_o_i,  onset_conf),
+            "spectral": (best_sc_i, sc_conf),
+        }
+
+        # Boost preferred strategy slightly to act as tiebreaker
+        config = load_config()
+        preferred = config.get("preferred_grain_strategy", "energy")
+        boosted = {
+            k: (idx, conf + (0.05 if k == preferred else 0.0))
+            for k, (idx, conf) in strategies.items()
+        }
+
+        winner_name = max(boosted, key=lambda k: boosted[k][1])
+        winner_f_i = strategies[winner_name][0]
+        winner_offset = float((start_f + winner_f_i) * hop) / sr
+
+        _strategy_wins[winner_name] = _strategy_wins.get(winner_name, 0) + 1
+        print(f"  [AI] best grain at {winner_offset:.1f}s [{winner_name}]")
+        return winner_offset
+    except Exception:
+        return 5.0
+
+
+def detect_wrong_version(wav_path: str) -> dict:
+    try:
+        import librosa
+        import numpy as np
+        y, sr = librosa.load(wav_path, sr=None, mono=True)
+
+        rms = librosa.feature.rms(y=y)[0]
+        energy_var = float(np.var(rms))
+        zcr = librosa.feature.zero_crossing_rate(y)[0]
+        zcr_var = float(np.var(zcr))
+        sf = librosa.feature.spectral_flatness(y=y)[0]
+        mean_flatness = float(np.mean(sf))
+
+        live_score = 0.0
+        if energy_var > 0.005:
+            live_score += 0.4
+        if zcr_var > 0.002:
+            live_score += 0.3
+        if mean_flatness < 0.01:
+            live_score += 0.3
+
+        cover_score = 0.0
+        if mean_flatness > 0.1:
+            cover_score += 0.4
+        try:
+            tempo, _ = librosa.beat.beat_track(y=y, sr=sr)
+            if float(tempo) < 40 or float(tempo) > 200:
+                cover_score += 0.3
+        except Exception:
+            pass
+
+        if live_score > cover_score and live_score >= 0.65:
+            return {"flag": "live?", "confidence": round(live_score, 2),
+                    "reason": "high energy variance and zcr variance"}
+        if cover_score >= 0.65:
+            return {"flag": "cover?", "confidence": round(cover_score, 2),
+                    "reason": "unusual spectral profile"}
+        return {"flag": "ok", "confidence": round(max(live_score, cover_score), 2), "reason": ""}
+    except Exception:
+        return {"flag": "ok", "confidence": 0.0, "reason": ""}
+
+
+def cluster_corpus(grains_dir: str, n_clusters: int = 5) -> dict:
+    try:
+        import librosa
+        import numpy as np
+        from sklearn.cluster import KMeans
+        from sklearn.preprocessing import StandardScaler
+    except ImportError:
+        print("  [AI] librosa or scikit-learn not installed. Run setup.bat or setup.sh.")
+        return {}
+    try:
+        wav_files = sorted(f for f in os.listdir(grains_dir) if f.lower().endswith(".wav"))
+        if not wav_files:
+            return {}
+
+        print(f"  [AI] Clustering {len(wav_files)} grains...")
+        features = []
+        valid_files = []
+        for fname in wav_files:
+            path = os.path.join(grains_dir, fname)
+            try:
+                y, sr = librosa.load(path, sr=None, mono=True)
+                rms = float(np.mean(librosa.feature.rms(y=y)))
+                sc = float(np.mean(librosa.feature.spectral_centroid(y=y, sr=sr)))
+                zcr = float(np.mean(librosa.feature.zero_crossing_rate(y)))
+                tempo, _ = librosa.beat.beat_track(y=y, sr=sr)
+                features.append([rms, sc, zcr, float(tempo)])
+                valid_files.append(fname)
+            except Exception:
+                pass
+
+        if len(valid_files) < 2:
+            return {f: 0 for f in valid_files}
+
+        k = max(2, min(n_clusters, len(valid_files) // 20))
+        X = StandardScaler().fit_transform(features)
+        labels = KMeans(n_clusters=k, n_init=10, random_state=42).fit_predict(X)
+        print(f"  [AI] Clustered into {k} groups.")
+        return {fname: int(label) for fname, label in zip(valid_files, labels)}
+    except Exception as e:
+        print(f"  [AI] Clustering failed: {e}")
+        return {}
+
+
+def run_clap_analysis(grains_dir: str, output_dir: str) -> None:
+    try:
+        import laion_clap  # noqa: F401
+    except ImportError:
+        print("  [CLAP] laion-clap is not installed. Install it separately and re-run.")
+        print("         Note: CLAP requires a 2GB model download on first use.")
+        return
+    try:
+        import json as _json
+        import numpy as np
+        import laion_clap
+        model = laion_clap.CLAP_Module(enable_fusion=False)
+        model.load_ckpt()
+        wav_files = sorted(f for f in os.listdir(grains_dir) if f.lower().endswith(".wav"))
+        paths = [os.path.join(grains_dir, f) for f in wav_files]
+        if not paths:
+            print("  [CLAP] No grains found.")
+            return
+        print(f"  [CLAP] Embedding {len(paths)} grains...")
+        embeddings = model.get_audio_embedding_from_filelist(paths, use_tensor=False)
+        try:
+            from umap import UMAP
+            coords = UMAP(n_components=2, random_state=42).fit_transform(embeddings)
+        except ImportError:
+            from sklearn.decomposition import PCA
+            coords = PCA(n_components=2).fit_transform(embeddings)
+        result = {fname: {"x": float(coords[i, 0]), "y": float(coords[i, 1])}
+                  for i, fname in enumerate(wav_files)}
+        out_path = os.path.join(output_dir, "coords.json")
+        with open(out_path, "w", encoding="utf-8") as fh:
+            _json.dump(result, fh, indent=2)
+        print(f"  [CLAP] coords.json saved to {out_path}")
+    except Exception as e:
+        print(f"  [CLAP] Error: {e}")
+
+
+def save_metadata(output_dir: str, metadata: dict) -> None:
+    try:
+        os.makedirs(output_dir, exist_ok=True)
+        path = os.path.join(output_dir, "metadata.json")
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(metadata, f, indent=2)
+        print(f"  [AI] metadata.json saved to {path}")
+    except Exception as e:
+        print(f"  [AI] Could not save metadata: {e}")
 
 
 # ── Translations ──────────────────────────────────────────────────────────────
@@ -221,6 +508,13 @@ TRANSLATIONS = {
             "It searches YouTube by artist and track name and downloads the first N seconds of the result. "
             "Most tracks will match correctly, but some may return a live recording, cover, or alternate version instead of the studio track."
         ),
+        "ai_section":            "AI ANALYSIS",
+        "smart_grain_check":     "Smart grain selection  (find the best moment automatically)",
+        "detect_versions_check": "Flag suspected wrong versions  (live recordings, covers)",
+        "extract_features_check":"Extract audio features  (tempo, energy, key per track)",
+        "cluster_check":         "Cluster corpus by similarity  (groups grains after slicing)",
+        "clap_check":            "CLAP embeddings  (optional — requires laion-clap, ~2GB model)",
+        "ai_requires_note":      "Smart analysis requires librosa. Run setup.bat or setup.sh to install it.",
         "start_btn": "Start", "stop_btn": "Stop",
         "log_section": "LOG",
     },
@@ -250,6 +544,13 @@ TRANSLATIONS = {
             "Busca en YouTube por artista y titulo, y descarga los primeros N segundos del resultado. "
             "La mayoria de pistas coinciden correctamente, pero algunas pueden devolver una version en vivo, cover o alternativa en lugar del estudio."
         ),
+        "ai_section":            "ANALISIS IA",
+        "smart_grain_check":     "Seleccion inteligente de grano  (encuentra el mejor momento automaticamente)",
+        "detect_versions_check": "Marcar versiones incorrectas  (grabaciones en vivo, covers)",
+        "extract_features_check":"Extraer caracteristicas de audio  (tempo, energia, tono por pista)",
+        "cluster_check":         "Agrupar corpus por similitud  (agrupa granos despues del corte)",
+        "clap_check":            "Embeddings CLAP  (opcional — requiere laion-clap, 2GB modelo)",
+        "ai_requires_note":      "El analisis inteligente requiere librosa. Ejecuta setup.bat o setup.sh para instalarlo.",
         "start_btn": "Iniciar", "stop_btn": "Detener",
         "log_section": "REGISTRO",
     },
@@ -279,6 +580,13 @@ TRANSLATIONS = {
             "Sie sucht auf YouTube nach Kunstler und Titel und ladt die ersten N Sekunden herunter. "
             "Die meisten Titel werden korrekt gefunden, aber einige konnen eine Live-Version, ein Cover oder eine alternative Version ergeben."
         ),
+        "ai_section":            "KI-ANALYSE",
+        "smart_grain_check":     "Intelligente Kornauswahl  (besten Moment automatisch finden)",
+        "detect_versions_check": "Falsche Versionen markieren  (Live-Aufnahmen, Cover)",
+        "extract_features_check":"Audio-Merkmale extrahieren  (Tempo, Energie, Tonart pro Titel)",
+        "cluster_check":         "Corpus nach Ahnlichkeit clustern  (gruppiert Korner nach dem Schneiden)",
+        "clap_check":            "CLAP-Einbettungen  (optional — erfordert laion-clap, ca. 2GB Modell)",
+        "ai_requires_note":      "Intelligente Analyse erfordert librosa. Fuhre setup.bat oder setup.sh aus.",
         "start_btn": "Start", "stop_btn": "Stopp",
         "log_section": "PROTOKOLL",
     },
@@ -308,6 +616,13 @@ TRANSLATIONS = {
             "它通过艺术家名和曲目名在 YouTube 上搜索，并下载结果的前 N 秒。"
             "大多数曲目可以正确匹配，但部分可能返回现场录音、翻唱版或其他版本，而非录音室原版。"
         ),
+        "ai_section":            "AI 分析",
+        "smart_grain_check":     "智能音粒选择  （自动找到最佳时刻）",
+        "detect_versions_check": "标记疑似错误版本  （现场录音、翻唱）",
+        "extract_features_check":"提取音频特征  （每首曲目的节奏、能量、调性）",
+        "cluster_check":         "按相似度聚类语料库  （切片后对音粒进行分组）",
+        "clap_check":            "CLAP 嵌入  （可选 — 需要 laion-clap，约 2GB 模型）",
+        "ai_requires_note":      "智能分析需要 librosa。请运行 setup.bat 或 setup.sh 进行安装。",
         "start_btn": "开始", "stop_btn": "停止",
         "log_section": "日志",
     },
@@ -337,6 +652,13 @@ TRANSLATIONS = {
             "アーティスト名とトラック名で YouTube を検索し、結果の最初の N 秒をダウンロードします。"
             "ほとんどのトラックは正しくマッチしますが、ライブ録音、カバー、別バージョンが返される場合があります。"
         ),
+        "ai_section":            "AI 分析",
+        "smart_grain_check":     "スマートグレイン選択  （最適な瞬間を自動検出）",
+        "detect_versions_check": "不正バージョンにフラグ  （ライブ録音、カバー）",
+        "extract_features_check":"音声特徴を抽出  （トラックごとのテンポ、エネルギー、キー）",
+        "cluster_check":         "コーパスを類似度でクラスタリング  （スライス後にグレインをグループ化）",
+        "clap_check":            "CLAP エンベディング  （オプション — laion-clap 必要、約 2GB）",
+        "ai_requires_note":      "スマート分析には librosa が必要です。setup.bat または setup.sh を実行してください。",
         "start_btn": "開始", "stop_btn": "停止",
         "log_section": "ログ",
     },
@@ -448,11 +770,11 @@ class CorpusBuilderUI:
         self._stop_event = threading.Event()
         self._running    = False
 
-        config       = load_config()
-        self._lang   = config.get("lang", "English")
+        config     = load_config()
+        self._lang = config.get("lang", "English")
 
         self.root.title(self._T()["window_title"])
-        self.root.minsize(860, 720)
+        self.root.minsize(860, 760)
 
         self._build_ui()
         self._poll_log()
@@ -468,11 +790,9 @@ class CorpusBuilderUI:
         T = self._T()
 
         self.root.grid_columnconfigure(0, weight=1)
-        # row 4 = tracks frame — the only row that expands vertically
-        self.root.grid_rowconfigure(4, weight=1)
+        self.root.grid_rowconfigure(4, weight=1)   # TRACKS frame expands
 
-        # ── Header ────────────────────────────────────────────────────────
-        # row 0
+        # ── Header — row 0 ────────────────────────────────────────────────
         header = ctk.CTkFrame(self.root, corner_radius=0, height=86)
         header.grid(row=0, column=0, sticky="ew")
         header.grid_columnconfigure(1, weight=1)
@@ -671,7 +991,6 @@ class CorpusBuilderUI:
         )
         self._explain_lbl.pack(fill="x", padx=16, pady=(6, 10))
 
-        # Checkboxes stacked vertically so long translated text never overflows
         steps_frame = ctk.CTkFrame(settings_frame, fg_color="transparent")
         steps_frame.pack(fill="x", padx=16, pady=(0, 16))
 
@@ -685,7 +1004,6 @@ class CorpusBuilderUI:
             variable=self._do_slice, font=ctk.CTkFont(size=14))
         self._step2_chk.pack(anchor="w")
 
-        # YouTube transparency note
         divider = ctk.CTkFrame(settings_frame, height=1,
                                fg_color=("gray80", "gray30"))
         divider.pack(fill="x", padx=16, pady=(12, 0))
@@ -701,9 +1019,62 @@ class CorpusBuilderUI:
         )
         self._youtube_note_lbl.pack(fill="x", padx=16, pady=(8, 16))
 
-        # ── Action bar — row 7 ────────────────────────────────────────────
+        # ── AI ANALYSIS label — row 7 ─────────────────────────────────────
+        self._ai_label = ctk.CTkLabel(
+            self.root, text=T["ai_section"],
+            font=ctk.CTkFont(size=13, weight="bold"),
+            text_color=("gray40", "gray55"),
+        )
+        self._ai_label.grid(row=7, column=0, sticky="w", padx=20, pady=(6, 4))
+
+        # ── AI ANALYSIS frame — row 8 ─────────────────────────────────────
+        self._ai_smart_grain     = _tk2.BooleanVar(value=True)
+        self._ai_detect_versions = _tk2.BooleanVar(value=True)
+        self._ai_extract_feats   = _tk2.BooleanVar(value=True)
+        self._ai_cluster         = _tk2.BooleanVar(value=True)
+        self._ai_clap            = _tk2.BooleanVar(value=False)
+
+        ai_frame = ctk.CTkFrame(self.root, corner_radius=10)
+        ai_frame.grid(row=8, column=0, sticky="ew", padx=14, pady=(0, 6))
+
+        self._ai_smart_grain_chk = ctk.CTkCheckBox(
+            ai_frame, text=T["smart_grain_check"],
+            variable=self._ai_smart_grain, font=ctk.CTkFont(size=14))
+        self._ai_smart_grain_chk.pack(anchor="w", padx=16, pady=(14, 6))
+
+        self._ai_detect_versions_chk = ctk.CTkCheckBox(
+            ai_frame, text=T["detect_versions_check"],
+            variable=self._ai_detect_versions, font=ctk.CTkFont(size=14))
+        self._ai_detect_versions_chk.pack(anchor="w", padx=16, pady=(0, 6))
+
+        self._ai_extract_feats_chk = ctk.CTkCheckBox(
+            ai_frame, text=T["extract_features_check"],
+            variable=self._ai_extract_feats, font=ctk.CTkFont(size=14))
+        self._ai_extract_feats_chk.pack(anchor="w", padx=16, pady=(0, 6))
+
+        self._ai_cluster_chk = ctk.CTkCheckBox(
+            ai_frame, text=T["cluster_check"],
+            variable=self._ai_cluster, font=ctk.CTkFont(size=14))
+        self._ai_cluster_chk.pack(anchor="w", padx=16, pady=(0, 6))
+
+        self._ai_clap_chk = ctk.CTkCheckBox(
+            ai_frame, text=T["clap_check"],
+            variable=self._ai_clap, font=ctk.CTkFont(size=14))
+        self._ai_clap_chk.pack(anchor="w", padx=16, pady=(0, 8))
+
+        self._ai_requires_note = ctk.CTkLabel(
+            ai_frame,
+            text=T["ai_requires_note"],
+            font=ctk.CTkFont(size=12),
+            text_color=("gray45", "gray50"),
+            justify="left",
+            anchor="w",
+        )
+        self._ai_requires_note.pack(anchor="w", padx=16, pady=(0, 12))
+
+        # ── Action bar — row 9 ────────────────────────────────────────────
         action_bar = ctk.CTkFrame(self.root, fg_color="transparent")
-        action_bar.grid(row=7, column=0, sticky="ew", padx=14, pady=(4, 6))
+        action_bar.grid(row=9, column=0, sticky="ew", padx=14, pady=(4, 6))
         action_bar.grid_columnconfigure(2, weight=1)
 
         self._start_btn = ctk.CTkButton(
@@ -723,17 +1094,17 @@ class CorpusBuilderUI:
         self._progress.grid(row=0, column=2, sticky="ew", padx=(18, 0))
         self._progress.set(0)
 
-        # ── LOG label — row 8 ─────────────────────────────────────────────
+        # ── LOG label — row 10 ────────────────────────────────────────────
         self._log_label = ctk.CTkLabel(
             self.root, text=T["log_section"],
             font=ctk.CTkFont(size=13, weight="bold"),
             text_color=("gray40", "gray55"),
         )
-        self._log_label.grid(row=8, column=0, sticky="w", padx=20, pady=(4, 4))
+        self._log_label.grid(row=10, column=0, sticky="w", padx=20, pady=(4, 4))
 
-        # ── LOG frame — row 9 ─────────────────────────────────────────────
+        # ── LOG frame — row 11 ────────────────────────────────────────────
         log_frame = ctk.CTkFrame(self.root, corner_radius=10)
-        log_frame.grid(row=9, column=0, sticky="ew", padx=14, pady=(0, 14))
+        log_frame.grid(row=11, column=0, sticky="ew", padx=14, pady=(0, 14))
 
         self._log_area = ctk.CTkTextbox(
             log_frame, height=170, state="disabled",
@@ -755,10 +1126,10 @@ class CorpusBuilderUI:
                     return val[mode_idx]
                 return val
 
-            bg     = _color("CTkTextbox", "fg_color")
-            fg     = _color("CTkLabel", "text_color")
-            sel    = _color("CTkButton", "fg_color")
-            head   = _color("CTkFrame", "top_fg_color")
+            bg   = _color("CTkTextbox", "fg_color")
+            fg   = _color("CTkLabel", "text_color")
+            sel  = _color("CTkButton", "fg_color")
+            head = _color("CTkFrame", "top_fg_color")
         except Exception:
             mode = ctk.get_appearance_mode()
             bg   = "#1e1e1e" if mode == "Dark" else "#f5f5f5"
@@ -787,6 +1158,7 @@ class CorpusBuilderUI:
         self._files_label.configure(text=T["files_section"])
         self._tracks_label.configure(text=T["tracks_section"])
         self._settings_label.configure(text=T["settings_section"])
+        self._ai_label.configure(text=T.get("ai_section", "AI ANALYSIS"))
         self._log_label.configure(text=T["log_section"])
         self._lang_label.configure(text=T["language_label"])
         self._csv_lbl.configure(text=T["csv_label"])
@@ -800,6 +1172,12 @@ class CorpusBuilderUI:
         self._explain_lbl.configure(text=T["explain_text"])
         self._step1_chk.configure(text=T["step1_check"])
         self._step2_chk.configure(text=T["step2_check"])
+        self._ai_smart_grain_chk.configure(text=T.get("smart_grain_check", "Smart grain selection"))
+        self._ai_detect_versions_chk.configure(text=T.get("detect_versions_check", "Flag suspected wrong versions"))
+        self._ai_extract_feats_chk.configure(text=T.get("extract_features_check", "Extract audio features"))
+        self._ai_cluster_chk.configure(text=T.get("cluster_check", "Cluster corpus by similarity"))
+        self._ai_clap_chk.configure(text=T.get("clap_check", "CLAP embeddings"))
+        self._ai_requires_note.configure(text=T.get("ai_requires_note", "Requires librosa."))
         self._start_btn.configure(text=T["start_btn"])
         self._stop_btn.configure(text=T["stop_btn"])
         self._desc_label.configure(text=T.get("app_description", ""))
@@ -833,7 +1211,6 @@ class CorpusBuilderUI:
         tracks, err = load_tracks_from_csv(path)
         T = self._T()
         if err:
-            # Use specific column-format error if no tracks were found
             if "Track Name" in err or "no tracks" in err.lower():
                 msg = T.get("csv_error_cols", err)
             else:
@@ -901,15 +1278,48 @@ class CorpusBuilderUI:
             self.root.after(0, self._on_done)
             return
 
+        ai_opts = {
+            "smart_grain":      self._ai_smart_grain.get(),
+            "detect_versions":  self._ai_detect_versions.get(),
+            "extract_features": self._ai_extract_feats.get(),
+            "cluster":          self._ai_cluster.get(),
+            "clap":             self._ai_clap.get(),
+            "duration":         duration,
+        }
+
+        metadata = {}
+        _strategy_wins.update({"energy": 0, "onsets": 0, "spectral": 0})
+
         with _PrintRedirector(self._log_queue):
             try:
                 if self._do_download.get():
-                    run_download(csv_path, previews_dir, prev_len, self._stop_event)
+                    run_download(csv_path, previews_dir, prev_len, self._stop_event,
+                                 ai_opts=ai_opts, metadata=metadata)
                 if self._do_slice.get() and not self._stop_event.is_set():
                     if os.path.isdir(previews_dir):
-                        run_slice(previews_dir, grains_dir, offset, duration, self._stop_event)
+                        run_slice(previews_dir, grains_dir, offset, duration,
+                                  self._stop_event, ai_opts=ai_opts, metadata=metadata)
                     else:
                         print("No previews folder found — run with Download enabled first.")
+
+                if not self._stop_event.is_set() and ai_opts.get("cluster"):
+                    if os.path.isdir(grains_dir):
+                        clusters = cluster_corpus(grains_dir)
+                        for fname, cluster_id in clusters.items():
+                            key = fname[:-4] if fname.lower().endswith(".wav") else fname
+                            metadata.setdefault(key, {})["cluster"] = cluster_id
+
+                if not self._stop_event.is_set() and ai_opts.get("clap"):
+                    if os.path.isdir(grains_dir):
+                        run_clap_analysis(grains_dir, output_root)
+
+                if metadata:
+                    save_metadata(output_root, metadata)
+
+                if any(_strategy_wins.values()):
+                    preferred = max(_strategy_wins, key=_strategy_wins.get)
+                    save_config({"preferred_grain_strategy": preferred})
+
                 print(f"\nAll done.  Previews: {previews_dir}  |  Grains: {grains_dir}")
             except Exception as e:
                 print(f"ERROR: {e}")

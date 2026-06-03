@@ -26,6 +26,35 @@ echo "    Used by: The app window, buttons, and all"
 echo "             visual elements"
 echo "    Size:    ~2 MB"
 echo
+echo " 3. librosa"
+echo "    What:    Audio analysis and feature extraction"
+echo "    By:      Brian McFee and contributors (open source)"
+echo "    Source:  librosa.org"
+echo "    Used by: AI analysis: tempo, energy, key detection,"
+echo "             smart grain selection, version detection"
+echo "    Size:    ~30 MB"
+echo
+echo " 4. scikit-learn"
+echo "    What:    Machine learning library"
+echo "    By:      scikit-learn contributors (open source)"
+echo "    Source:  scikit-learn.org"
+echo "    Used by: K-means clustering of grains by sonic similarity"
+echo "    Size:    ~30 MB"
+echo
+echo " 5. soundfile"
+echo "    What:    Audio file reader"
+echo "    By:      Bastian Bechtold (open source)"
+echo "    Source:  github.com/bastibe/python-soundfile"
+echo "    Used by: Loading WAV files for AI analysis"
+echo "    Size:    ~2 MB"
+echo
+echo " 6. numpy"
+echo "    What:    Numerical computing library"
+echo "    By:      NumPy contributors (open source)"
+echo "    Source:  numpy.org"
+echo "    Used by: Numerical processing in audio analysis"
+echo "    Size:    ~20 MB"
+echo
 echo " These packages also install automatically"
 echo " as sub-dependencies:"
 echo
@@ -78,12 +107,12 @@ echo "[OK] $(python3 --version)"
 
 # Install Python packages
 echo
-echo "Installing yt-dlp and customtkinter..."
-pip3 install --upgrade yt-dlp customtkinter
+echo "Installing Python packages..."
+pip3 install --upgrade yt-dlp customtkinter librosa scikit-learn soundfile numpy
 if [ $? -ne 0 ]; then
     echo
     echo "ERROR: Installation failed."
-    echo "Try running with: sudo pip3 install --upgrade yt-dlp customtkinter"
+    echo "Try running with: sudo pip3 install --upgrade yt-dlp customtkinter librosa scikit-learn soundfile numpy"
     exit 1
 fi
 echo "[OK] Python packages installed"
