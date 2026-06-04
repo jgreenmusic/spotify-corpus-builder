@@ -10,82 +10,27 @@ echo "------------------------------------------------"
 echo " PYTHON PACKAGES  (installed via pip)"
 echo "------------------------------------------------"
 echo
-echo " 1. yt-dlp"
-echo "    What:    YouTube audio downloader"
-echo "    By:      yt-dlp open source team"
-echo "    Source:  github.com/yt-dlp/yt-dlp"
-echo "    Used by: Searching YouTube and downloading"
-echo "             audio previews for each track"
-echo "    Size:    ~5 MB"
-echo
-echo " 2. customtkinter"
-echo "    What:    Modern graphical UI library for Python"
-echo "    By:      Tom Schimansky (open source)"
-echo "    Source:  github.com/TomSchimansky/CustomTkinter"
-echo "    Used by: The app window, buttons, and all"
-echo "             visual elements"
-echo "    Size:    ~2 MB"
-echo
-echo " 3. librosa"
-echo "    What:    Audio analysis and feature extraction"
-echo "    By:      Brian McFee and contributors (open source)"
-echo "    Source:  librosa.org"
-echo "    Used by: AI analysis: tempo, energy, key detection,"
-echo "             smart grain selection, version detection"
-echo "    Size:    ~30 MB"
-echo
-echo " 4. scikit-learn"
-echo "    What:    Machine learning library"
-echo "    By:      scikit-learn contributors (open source)"
-echo "    Source:  scikit-learn.org"
-echo "    Used by: K-means clustering of grains by sonic similarity"
-echo "    Size:    ~30 MB"
-echo
-echo " 5. soundfile"
-echo "    What:    Audio file reader"
-echo "    By:      Bastian Bechtold (open source)"
-echo "    Source:  github.com/bastibe/python-soundfile"
-echo "    Used by: Loading WAV files for AI analysis"
-echo "    Size:    ~2 MB"
-echo
-echo " 6. numpy"
-echo "    What:    Numerical computing library"
-echo "    By:      NumPy contributors (open source)"
-echo "    Source:  numpy.org"
-echo "    Used by: Numerical processing in audio analysis"
-echo "    Size:    ~20 MB"
-echo
-echo " These packages also install automatically"
-echo " as sub-dependencies:"
-echo
-echo "    mutagen      - reads audio file metadata"
-echo "    Pillow       - image handling (for UI icons)"
-echo "    darkdetect   - detects system dark/light mode"
-echo "    packaging    - version number handling"
-echo "    requests     - standard web requests library"
+echo " 1. yt-dlp          YouTube audio downloader"
+echo " 2. customtkinter   Modern GUI library"
+echo " 3. librosa         Audio analysis (AI features)"
+echo " 4. scikit-learn    Machine learning (clustering)"
+echo " 5. soundfile       WAV file reader"
+echo " 6. numpy           Numerical processing"
 echo
 echo "------------------------------------------------"
-echo " SYSTEM TOOL  (installed via Homebrew if missing)"
+echo " SYSTEM TOOL"
 echo "------------------------------------------------"
 echo
-echo " 3. ffmpeg"
-echo "    What:    Audio and video converter"
-echo "    By:      FFmpeg open source project"
-echo "    Source:  ffmpeg.org"
-echo "    Used by: Converting downloaded audio to WAV"
-echo "    Size:    ~80-100 MB"
+echo " ffmpeg  --  audio converter (via Homebrew if missing)"
 echo
 echo "------------------------------------------------"
 echo " IMPORTANT NOTES"
 echo "------------------------------------------------"
 echo
-echo " - All packages listed above are open source"
-echo " - None of them collect your data or require"
-echo "   an account"
-echo " - yt-dlp searches YouTube publicly, the same"
-echo "   way a browser would"
-echo " - Nothing is installed silently beyond what"
-echo "   is listed here"
+echo " - All packages are open source"
+echo " - None collect your data or require an account"
+echo " - yt-dlp searches YouTube the same way a browser would"
+echo " - Nothing is installed silently beyond the list above"
 echo
 echo "============================================"
 echo " Press Ctrl+C NOW to cancel."
@@ -94,7 +39,7 @@ echo "============================================"
 echo
 sleep 10
 
-# Check Python 3
+# ── Check Python 3 ────────────────────────────────────────────────────────────
 if ! command -v python3 &>/dev/null; then
     echo
     echo "ERROR: Python 3 not found."
@@ -105,19 +50,55 @@ fi
 echo
 echo "[OK] $(python3 --version)"
 
-# Install Python packages
+# ── Install packages ─────────────────────────────────────────────────────────
+PACKAGES="yt-dlp customtkinter librosa scikit-learn soundfile numpy"
+
 echo
 echo "Installing Python packages..."
-pip3 install --upgrade yt-dlp customtkinter librosa scikit-learn soundfile numpy
-if [ $? -ne 0 ]; then
-    echo
-    echo "ERROR: Installation failed."
-    echo "Try running with: sudo pip3 install --upgrade yt-dlp customtkinter librosa scikit-learn soundfile numpy"
-    exit 1
-fi
-echo "[OK] Python packages installed"
 
-# Check / install ffmpeg
+# Try normal install first (works on most systems)
+python3 -m pip install --upgrade $PACKAGES 2>/dev/null
+STATUS=$?
+
+# macOS 14+ / Homebrew Python blocks pip without a flag or venv
+if [ $STATUS -ne 0 ]; then
+    echo
+    echo "[!] Standard pip install blocked (common on macOS 14+ / Homebrew Python)."
+    echo "    Trying --break-system-packages..."
+    python3 -m pip install --upgrade --break-system-packages $PACKAGES 2>/dev/null
+    STATUS=$?
+fi
+
+# Fall back to a local virtual environment if both attempts failed
+if [ $STATUS -ne 0 ]; then
+    echo
+    echo "[!] pip install still failed. Creating a local virtual environment..."
+    python3 -m venv .venv
+    source .venv/bin/activate
+    python3 -m pip install --upgrade $PACKAGES
+    STATUS=$?
+    deactivate
+
+    if [ $STATUS -eq 0 ]; then
+        echo
+        echo "[OK] Packages installed into .venv"
+        echo
+        echo "  IMPORTANT: Because a virtual environment was used, run the app with:"
+        echo "    source .venv/bin/activate && python3 spotify_corpus_builder.py"
+        echo "  Or double-click run.sh if you have one."
+    else
+        echo
+        echo "ERROR: Installation failed. Try manually:"
+        echo "  python3 -m venv .venv"
+        echo "  source .venv/bin/activate"
+        echo "  pip install yt-dlp customtkinter librosa scikit-learn soundfile numpy"
+        exit 1
+    fi
+else
+    echo "[OK] Python packages installed"
+fi
+
+# ── Check / install ffmpeg ────────────────────────────────────────────────────
 echo
 if command -v ffmpeg &>/dev/null; then
     echo "[OK] ffmpeg found"

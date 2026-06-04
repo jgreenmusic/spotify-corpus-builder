@@ -111,10 +111,12 @@ python --version
 :: Install Python packages
 echo.
 echo Installing Python packages...
-pip install --upgrade yt-dlp customtkinter librosa scikit-learn soundfile numpy
+python -m pip install --upgrade yt-dlp customtkinter librosa scikit-learn soundfile numpy
 if errorlevel 1 (
     echo.
-    echo ERROR: Installation failed. Try running this script as Administrator.
+    echo ERROR: Installation failed. Try running this script as Administrator,
+    echo or open a terminal and run:
+    echo   python -m pip install yt-dlp customtkinter librosa scikit-learn soundfile numpy
     pause
     exit /b 1
 )
