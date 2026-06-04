@@ -6,18 +6,51 @@ one into a short grain for use as a sample corpus.
 
 What you get:
   output/previews/  --  one WAV per track (default: 30 seconds each)
-  output/grains/    --  one short slice per track (default: 1.5 seconds,
-                        starting 5 seconds into the preview)
+  output/grains/    --  one short slice per track
+
+
+
+SETUP (one time only)
+----------------------
+
+  Windows  --  double-click setup.bat
+
+  Mac      --  open Terminal, drag this folder into it, then run:
+                 chmod +x setup.sh
+                 ./setup.sh
+
+  This installs yt-dlp, customtkinter, librosa, scikit-learn, soundfile,
+  and numpy. It also checks that ffmpeg is available and installs it via
+  Homebrew on Mac if missing.
+
+  On macOS 14+ (Sonoma) or systems with Homebrew Python, setup.sh will
+  automatically try fallback methods if the standard pip install is blocked.
+
+
+HOW TO RUN
+-----------
+
+  Windows:   double-click spotify_corpus_builder.py
+             or run:  python spotify_corpus_builder.py
+
+  Mac:       run:  python3 spotify_corpus_builder.py
+
+  Load your CSV using the Browse button, check the track list, adjust
+  settings if needed, then click Start.
+
+  If it gets interrupted, just run it again -- it skips files that
+  already exist.
+
 
 
 IMPORTANT: HOW THE DOWNLOADS WORK
 -----------------------------------
 
   This app does NOT use the Spotify API and does NOT download official
-  Spotify audio. Spotify's preview API is not publicly accessible.
+  Spotify audio.
 
   Instead, it searches YouTube for each track using the artist name and
-  track title (e.g. "Radiohead - Paranoid Android"), then downloads the
+  track title (e.g. "Psychic Mirrors - Ricky Thai"), then downloads the
   first N seconds of whatever YouTube returns.
 
   What this means in practice:
@@ -26,7 +59,6 @@ IMPORTANT: HOW THE DOWNLOADS WORK
 
     - Some tracks may return a live recording, a cover version, a music
       video, or a fan upload instead of the original studio recording.
-      This is a limitation of relying on YouTube search results.
 
     - Very obscure tracks may not be found at all and will show [failed]
       in the log.
@@ -44,37 +76,9 @@ WHAT YOU NEED BEFORE RUNNING
   ffmpeg            handles audio conversion
                     Windows: run  winget install ffmpeg  in PowerShell
                     Mac:     run  brew install ffmpeg  in Terminal
-
-  yt-dlp            downloads from YouTube (installed by the setup script)
-
-
-SETUP (one time only)
-----------------------
-
-  Windows  --  double-click setup.bat
-
-  Mac      --  open Terminal, navigate to this folder, then run:
-                 chmod +x setup.sh
-                 ./setup.sh
-
-  This installs yt-dlp and customtkinter, and checks that ffmpeg is ready.
-  It will show you exactly what is being installed before it starts.
+                    (setup.sh will attempt this automatically on Mac)
 
 
-HOW TO RUN
------------
-
-  Just double-click or run the script -- a window will open.
-
-  Windows:   python  spotify_corpus_builder.py
-  Mac:       python3 spotify_corpus_builder.py
-
-  Load your CSV using the Browse button, check the track list, adjust
-  settings if needed, then click Start. Nothing downloads until you
-  click Start.
-
-  If it gets interrupted, just run it again -- it skips files that
-  already exist.
 
 
 HOW TO EXPORT YOUR CSV FROM SPOTIFY
@@ -91,72 +95,74 @@ HOW TO EXPORT YOUR CSV FROM SPOTIFY
   Exportify produces exactly this format.
 
 
-CHANGING HOW IT WORKS
------------------------
-
-  Everything below can be adjusted in the Settings section of the app.
-  You do not need to use the command line for any of this.
+SETTINGS
+---------
 
   Download length
-    How many seconds of each track to download. The default is 30 seconds.
-    You might lower this if you want smaller files and a faster run, or raise
-    it if you want more of each track to work with before slicing.
+    How many seconds of each track to download from YouTube (default: 30s).
 
   Start cut at
-    How far into the downloaded preview to start your grain. The default is
-    5 seconds in. The first few seconds of a track are often an intro or
-    fade-in, so starting a little further in usually gives you a more
-    representative slice of the song.
+    How far into the preview to begin the grain (default: 5s in).
 
   Cut length
-    How long each grain should be. The default is 1.5 seconds. Shorter grains
-    work well for dense concatenative synthesis. Longer grains preserve more
-    musical context and are better if you want recognizable fragments.
+    How long each grain should be (default: 1.5s).
 
-  Step 1 and Step 2 checkboxes
-    You can run just the download, just the slicing, or both. This is useful
-    if you already have previews downloaded and only want to re-slice them
-    with different settings, without downloading everything again.
+  Step 1 -- Download previews from YouTube
+    Uncheck if you already have previews downloaded and only want to re-slice.
+
+  Step 2 -- Slice into grains
+    Uncheck if you only want the raw previews without slicing.
+
+  Random sample -- pick N tracks at random from the CSV
+    Check this and set a count to draw a random subset from your CSV instead
+    of processing every track. Useful for testing with a large CSV like
+    Liked_Songs.csv without committing to the full run.
+
+  Randomize cut per track -- duration min to max
+    When checked, each track gets its own randomly chosen grain length
+    (between your min and max) and a randomly chosen start point within
+    the downloaded preview. Every run produces a different set of grains.
+
+  Randomize button (in the action bar)
+    Randomizes the Download length, Offset, Cut length, and AI checkboxes
+    all at once. Good for quickly exploring different parameter combinations.
+
+  Audio folder (optional)
+    Browse to a folder of existing WAV files to feed directly into Step 2
+    without downloading anything. The app will slice those files using your
+    current settings. When an audio folder is set, Step 1 is skipped even
+    if checked.
 
 
-OUTPUT STRUCTURE
------------------
+AI ANALYSIS (Note to self: I'm not sure if the AI Analysis feature is functioning properly. I am not a professional coder and used Claude Code to help me realize this tool in it's entirety) 
+------------
 
-  output/
-    previews/        <-- downloaded WAVs (one per track)
-      Artist - Track Name.wav
-      ...
-    grains/          <-- sliced grains (ready for corpus use)
-      Artist - Track Name.wav
-      ...
+  The AI section requires librosa, which setup.bat / setup.sh installs.
+  The section header shows a checkmark when librosa is ready, or disables
+  the checkboxes if it is missing.
 
+  Smart grain selection
+    Analyzes each WAV with three strategies (peak energy, onset density,
+    spectral centroid variance) and picks the best moment to cut. The
+    winning strategy is remembered across runs and used as a tiebreaker.
 
-IF SOMETHING GOES WRONG
--------------------------
+  Flag suspected wrong versions
+    Scores each download for live-recording and cover indicators. Tracks
+    that score above threshold are flagged in the log as [live?] or [cover?].
 
-  The log area at the bottom of the app will tell you what happened and
-  what to do. Error messages are written to explain the fix, not just
-  describe the problem.
+  Extract audio features
+    Writes tempo, RMS energy, spectral centroid, zero crossing rate, and
+    estimated key for each track into output/metadata.json.
 
-  What if the app won't open at all?
-    Run setup.bat (Windows) or setup.sh (Mac). Something was not installed
-    correctly. The setup script will find and fix it.
+  Cluster corpus by similarity
+    After slicing, groups your grains into similarity buckets using
+    K-means clustering. Cluster IDs are written into metadata.json.
 
-  What if a track shows [failed] in the log?
-    yt-dlp could not find that track on YouTube. This is normal for obscure
-    tracks. Everything else still downloads. You can run the app again and
-    it will skip tracks that already finished.
+  CLAP embeddings (optional)
+    Requires laion-clap (~2GB model download on first use). Produces a
+    coords.json with 2D coordinates for each grain based on audio content,
+    suitable for spatial corpus browsers.
 
-  What if a downloaded file sounds wrong (live version, cover, etc.)?
-    This is a known limitation of using YouTube search. The app has no way
-    to guarantee the studio version comes back. See the "HOW THE DOWNLOADS
-    WORK" section above for a full explanation.
-
-  What if the app stops halfway through?
-    Just run it again. It skips any track that already has a file in the
-    output folder.
-
-  What if the track list is empty after loading a CSV?
-    The CSV columns are not in the expected format. The app will explain
-    what it needs in the log. Exporting your playlist fresh from exportify.net
-    will always produce the correct format.
+  NOTE: The first time librosa's smart grain selection runs, numba (its
+  JIT compiler) takes 30-60 seconds to compile. The log will go quiet
+  briefly -- this is normal. Subsequent runs are fast.

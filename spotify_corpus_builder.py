@@ -124,15 +124,16 @@ def download_track(artist: str, name: str, wav_path: str, preview_length: int) -
 
 def run_download(csv_path: str, previews_dir: str, preview_length: int,
                  stop_event: threading.Event = None, ai_opts: dict = None,
-                 metadata: dict = None):
+                 metadata: dict = None, tracks: list = None):
     os.makedirs(previews_dir, exist_ok=True)
-    tracks = []
-    with open(csv_path, newline="", encoding="utf-8-sig") as f:
-        for row in csv.DictReader(f):
-            name   = _find_col(row, _TRACK_COLS).strip()
-            artist = _find_col(row, _ARTIST_COLS).strip()
-            if name and artist:
-                tracks.append({"name": name, "artist": artist})
+    if tracks is None:
+        tracks = []
+        with open(csv_path, newline="", encoding="utf-8-sig") as f:
+            for row in csv.DictReader(f):
+                name   = _find_col(row, _TRACK_COLS).strip()
+                artist = _find_col(row, _ARTIST_COLS).strip()
+                if name and artist:
+                    tracks.append({"name": name, "artist": artist})
 
     print(f"\n=== DOWNLOAD ({len(tracks)} tracks -> {preview_length}s previews) ===")
     print(f"Output: {previews_dir}\n")
@@ -181,7 +182,9 @@ def slice_preview(src: str, dst: str, offset: float, duration: float, ffmpeg: st
 
 def run_slice(previews_dir: str, grains_dir: str, offset: float, duration: float,
               stop_event: threading.Event = None, ai_opts: dict = None,
-              metadata: dict = None):
+              metadata: dict = None, randomize_cut: bool = False,
+              dur_min: float = 0.5, dur_max: float = 3.0, preview_length: int = 30):
+    import random as _r
     os.makedirs(grains_dir, exist_ok=True)
     ffmpeg = ffmpeg_bin()
     wav_files = sorted(f for f in os.listdir(previews_dir) if f.lower().endswith(".wav"))
@@ -191,7 +194,10 @@ def run_slice(previews_dir: str, grains_dir: str, offset: float, duration: float
     metadata = metadata or {}
     use_smart = ai_opts.get("smart_grain") and metadata
 
-    print(f"\n=== SLICE ({total} files -> offset {offset}s, grain {duration}s) ===")
+    if randomize_cut:
+        print(f"\n=== SLICE ({total} files -> random cut, duration {dur_min}–{dur_max}s) ===")
+    else:
+        print(f"\n=== SLICE ({total} files -> offset {offset}s, grain {duration}s) ===")
     if use_smart:
         print("  Smart grain selection ON — using AI-suggested offsets where available.")
     print(f"Output: {grains_dir}\n")
@@ -209,13 +215,21 @@ def run_slice(previews_dir: str, grains_dir: str, offset: float, duration: float
             continue
 
         track_key = fname[:-4] if fname.lower().endswith(".wav") else fname
-        effective_offset = offset
-        if use_smart and track_key in metadata:
-            suggested = metadata[track_key].get("suggested_offset")
-            if suggested is not None:
-                effective_offset = suggested
 
-        if slice_preview(src, dst, effective_offset, duration, ffmpeg):
+        if randomize_cut:
+            effective_duration = round(_r.uniform(dur_min, dur_max), 2)
+            max_offset = max(0.0, preview_length - effective_duration - 1.0)
+            effective_offset = round(_r.uniform(0.0, max_offset), 2)
+            print(f"  [{i}/{total}] [cut]     offset={effective_offset}s dur={effective_duration}s  {fname}")
+        else:
+            effective_offset = offset
+            effective_duration = duration
+            if use_smart and track_key in metadata:
+                suggested = metadata[track_key].get("suggested_offset")
+                if suggested is not None:
+                    effective_offset = suggested
+
+        if slice_preview(src, dst, effective_offset, effective_duration, ffmpeg):
             print(f"  [{i}/{total}] [sliced]  {fname}")
             done += 1
         else:
@@ -233,6 +247,14 @@ def _check_librosa() -> bool:
         return True
     except ImportError:
         print("  [AI] librosa is not installed. Run setup.bat or setup.sh to enable AI analysis.")
+        return False
+
+
+def _librosa_available() -> bool:
+    try:
+        import librosa  # noqa: F401
+        return True
+    except ImportError:
         return False
 
 
@@ -772,9 +794,11 @@ class CorpusBuilderUI:
 
         config     = load_config()
         self._lang = config.get("lang", "English")
+        self._librosa_ok = _librosa_available()
 
         self.root.title(self._T()["window_title"])
-        self.root.minsize(860, 760)
+        self.root.minsize(860, 500)
+        self.root.geometry("900x700")
 
         self._build_ui()
         self._poll_log()
@@ -790,10 +814,14 @@ class CorpusBuilderUI:
         T = self._T()
 
         self.root.grid_columnconfigure(0, weight=1)
-        self.root.grid_rowconfigure(4, weight=1)   # TRACKS frame expands
+        self.root.grid_rowconfigure(0, weight=1)
+
+        self._scroll = ctk.CTkScrollableFrame(self.root)
+        self._scroll.grid(row=0, column=0, sticky="nsew")
+        self._scroll.grid_columnconfigure(0, weight=1)
 
         # ── Header — row 0 ────────────────────────────────────────────────
-        header = ctk.CTkFrame(self.root, corner_radius=0, height=86)
+        header = ctk.CTkFrame(self._scroll, corner_radius=0, height=86)
         header.grid(row=0, column=0, sticky="ew")
         header.grid_columnconfigure(1, weight=1)
         header.grid_propagate(False)
@@ -836,14 +864,14 @@ class CorpusBuilderUI:
 
         # ── FILES label — row 1 ───────────────────────────────────────────
         self._files_label = ctk.CTkLabel(
-            self.root, text=T["files_section"],
+            self._scroll, text=T["files_section"],
             font=ctk.CTkFont(size=13, weight="bold"),
             text_color=("gray40", "gray55"),
         )
         self._files_label.grid(row=1, column=0, sticky="w", padx=20, pady=(16, 4))
 
         # ── FILES frame — row 2 ───────────────────────────────────────────
-        files_frame = ctk.CTkFrame(self.root, corner_radius=10)
+        files_frame = ctk.CTkFrame(self._scroll, corner_radius=10)
         files_frame.grid(row=2, column=0, sticky="ew", padx=14, pady=(0, 6))
         files_frame.grid_columnconfigure(1, weight=1)
 
@@ -883,18 +911,42 @@ class CorpusBuilderUI:
         self._out_browse_btn = ctk.CTkButton(
             files_frame, text=T["browse_btn"], width=100, height=36,
             font=ctk.CTkFont(size=13), command=self._browse_output)
-        self._out_browse_btn.grid(row=2, column=2, padx=(4, 16), pady=(4, 16))
+        self._out_browse_btn.grid(row=2, column=2, padx=(4, 16), pady=(4, 4))
+
+        self._audio_lbl = ctk.CTkLabel(
+            files_frame,
+            text="Audio folder  (optional — load existing WAVs, skips download)",
+            font=ctk.CTkFont(size=14), anchor="w")
+        self._audio_lbl.grid(row=3, column=0, padx=(16, 12), pady=(4, 16), sticky="w")
+
+        self._audio_folder_var = _tk.StringVar()
+        ctk.CTkEntry(files_frame, textvariable=self._audio_folder_var,
+                     height=36, font=ctk.CTkFont(size=13)
+                     ).grid(row=3, column=1, padx=4, pady=(4, 16), sticky="ew")
+
+        audio_btn_frame = ctk.CTkFrame(files_frame, fg_color="transparent")
+        audio_btn_frame.grid(row=3, column=2, padx=(4, 16), pady=(4, 16))
+        ctk.CTkButton(
+            audio_btn_frame, text=T["browse_btn"], width=68, height=36,
+            font=ctk.CTkFont(size=13), command=self._browse_audio_folder
+        ).pack(side="left", padx=(0, 4))
+        ctk.CTkButton(
+            audio_btn_frame, text="✕", width=28, height=36,
+            font=ctk.CTkFont(size=13),
+            fg_color=("gray70", "gray30"), hover_color=("gray60", "gray40"),
+            command=lambda: self._audio_folder_var.set("")
+        ).pack(side="left")
 
         # ── TRACKS label — row 3 ──────────────────────────────────────────
         self._tracks_label = ctk.CTkLabel(
-            self.root, text=T["tracks_section"],
+            self._scroll, text=T["tracks_section"],
             font=ctk.CTkFont(size=13, weight="bold"),
             text_color=("gray40", "gray55"),
         )
         self._tracks_label.grid(row=3, column=0, sticky="w", padx=20, pady=(6, 4))
 
         # ── TRACKS frame — row 4 (expands) ────────────────────────────────
-        tracks_outer = ctk.CTkFrame(self.root, corner_radius=10)
+        tracks_outer = ctk.CTkFrame(self._scroll, corner_radius=10)
         tracks_outer.grid(row=4, column=0, sticky="nsew", padx=14, pady=(0, 6))
         tracks_outer.grid_columnconfigure(0, weight=1)
         tracks_outer.grid_rowconfigure(1, weight=1)
@@ -944,14 +996,14 @@ class CorpusBuilderUI:
 
         # ── SETTINGS label — row 5 ────────────────────────────────────────
         self._settings_label = ctk.CTkLabel(
-            self.root, text=T["settings_section"],
+            self._scroll, text=T["settings_section"],
             font=ctk.CTkFont(size=13, weight="bold"),
             text_color=("gray40", "gray55"),
         )
         self._settings_label.grid(row=5, column=0, sticky="w", padx=20, pady=(6, 4))
 
         # ── SETTINGS frame — row 6 ────────────────────────────────────────
-        settings_frame = ctk.CTkFrame(self.root, corner_radius=10)
+        settings_frame = ctk.CTkFrame(self._scroll, corner_radius=10)
         settings_frame.grid(row=6, column=0, sticky="ew", padx=14, pady=(0, 6))
 
         import tkinter as _tk2
@@ -1004,6 +1056,53 @@ class CorpusBuilderUI:
             variable=self._do_slice, font=ctk.CTkFont(size=14))
         self._step2_chk.pack(anchor="w")
 
+        sample_row = ctk.CTkFrame(steps_frame, fg_color="transparent")
+        sample_row.pack(anchor="w", pady=(10, 0))
+
+        self._random_sample_enabled = _tk2.BooleanVar(value=False)
+        ctk.CTkCheckBox(
+            sample_row, text="Random sample — pick",
+            variable=self._random_sample_enabled,
+            font=ctk.CTkFont(size=14),
+        ).pack(side="left")
+
+        self._sample_count_var = _tk2.StringVar(value="25")
+        ctk.CTkEntry(
+            sample_row, textvariable=self._sample_count_var,
+            width=64, height=32, font=ctk.CTkFont(size=14), justify="center",
+        ).pack(side="left", padx=(10, 10))
+
+        ctk.CTkLabel(
+            sample_row, text="tracks at random from the CSV",
+            font=ctk.CTkFont(size=14),
+        ).pack(side="left")
+
+        cut_row = ctk.CTkFrame(steps_frame, fg_color="transparent")
+        cut_row.pack(anchor="w", pady=(8, 0))
+
+        self._randomize_cut_enabled = _tk2.BooleanVar(value=False)
+        ctk.CTkCheckBox(
+            cut_row, text="Randomize cut per track — duration",
+            variable=self._randomize_cut_enabled,
+            font=ctk.CTkFont(size=14),
+        ).pack(side="left")
+
+        self._dur_min_var = _tk2.StringVar(value="0.5")
+        ctk.CTkEntry(
+            cut_row, textvariable=self._dur_min_var,
+            width=56, height=32, font=ctk.CTkFont(size=14), justify="center",
+        ).pack(side="left", padx=(10, 4))
+
+        ctk.CTkLabel(cut_row, text="–", font=ctk.CTkFont(size=14)).pack(side="left", padx=4)
+
+        self._dur_max_var = _tk2.StringVar(value="3.0")
+        ctk.CTkEntry(
+            cut_row, textvariable=self._dur_max_var,
+            width=56, height=32, font=ctk.CTkFont(size=14), justify="center",
+        ).pack(side="left", padx=(4, 8))
+
+        ctk.CTkLabel(cut_row, text="s", font=ctk.CTkFont(size=14)).pack(side="left")
+
         divider = ctk.CTkFrame(settings_frame, height=1,
                                fg_color=("gray80", "gray30"))
         divider.pack(fill="x", padx=16, pady=(12, 0))
@@ -1020,8 +1119,13 @@ class CorpusBuilderUI:
         self._youtube_note_lbl.pack(fill="x", padx=16, pady=(8, 16))
 
         # ── AI ANALYSIS label — row 7 ─────────────────────────────────────
+        ai_label_text = (
+            T["ai_section"] + "  ✓ librosa ready"
+            if self._librosa_ok else
+            T["ai_section"] + "  ✗ librosa not installed — features disabled"
+        )
         self._ai_label = ctk.CTkLabel(
-            self.root, text=T["ai_section"],
+            self._scroll, text=ai_label_text,
             font=ctk.CTkFont(size=13, weight="bold"),
             text_color=("gray40", "gray55"),
         )
@@ -1034,7 +1138,7 @@ class CorpusBuilderUI:
         self._ai_cluster         = _tk2.BooleanVar(value=True)
         self._ai_clap            = _tk2.BooleanVar(value=False)
 
-        ai_frame = ctk.CTkFrame(self.root, corner_radius=10)
+        ai_frame = ctk.CTkFrame(self._scroll, corner_radius=10)
         ai_frame.grid(row=8, column=0, sticky="ew", padx=14, pady=(0, 6))
 
         self._ai_smart_grain_chk = ctk.CTkCheckBox(
@@ -1072,10 +1176,15 @@ class CorpusBuilderUI:
         )
         self._ai_requires_note.pack(anchor="w", padx=16, pady=(0, 12))
 
+        if not self._librosa_ok:
+            for chk in (self._ai_smart_grain_chk, self._ai_detect_versions_chk,
+                        self._ai_extract_feats_chk, self._ai_cluster_chk, self._ai_clap_chk):
+                chk.configure(state="disabled")
+
         # ── Action bar — row 9 ────────────────────────────────────────────
-        action_bar = ctk.CTkFrame(self.root, fg_color="transparent")
+        action_bar = ctk.CTkFrame(self._scroll, fg_color="transparent")
         action_bar.grid(row=9, column=0, sticky="ew", padx=14, pady=(4, 6))
-        action_bar.grid_columnconfigure(2, weight=1)
+        action_bar.grid_columnconfigure(3, weight=1)
 
         self._start_btn = ctk.CTkButton(
             action_bar, text=T["start_btn"], width=120, height=42,
@@ -1090,20 +1199,27 @@ class CorpusBuilderUI:
             font=ctk.CTkFont(size=15))
         self._stop_btn.grid(row=0, column=1)
 
+        self._randomize_btn = ctk.CTkButton(
+            action_bar, text="Randomize", width=120, height=42,
+            command=self._randomize,
+            fg_color=("gray65", "gray35"), hover_color=("gray55", "gray45"),
+            font=ctk.CTkFont(size=14))
+        self._randomize_btn.grid(row=0, column=2, padx=(10, 0))
+
         self._progress = ctk.CTkProgressBar(action_bar, mode="indeterminate", height=10)
-        self._progress.grid(row=0, column=2, sticky="ew", padx=(18, 0))
+        self._progress.grid(row=0, column=3, sticky="ew", padx=(18, 0))
         self._progress.set(0)
 
         # ── LOG label — row 10 ────────────────────────────────────────────
         self._log_label = ctk.CTkLabel(
-            self.root, text=T["log_section"],
+            self._scroll, text=T["log_section"],
             font=ctk.CTkFont(size=13, weight="bold"),
             text_color=("gray40", "gray55"),
         )
         self._log_label.grid(row=10, column=0, sticky="w", padx=20, pady=(4, 4))
 
         # ── LOG frame — row 11 ────────────────────────────────────────────
-        log_frame = ctk.CTkFrame(self.root, corner_radius=10)
+        log_frame = ctk.CTkFrame(self._scroll, corner_radius=10)
         log_frame.grid(row=11, column=0, sticky="ew", padx=14, pady=(0, 14))
 
         self._log_area = ctk.CTkTextbox(
@@ -1205,6 +1321,12 @@ class CorpusBuilderUI:
         if path:
             self._out_var.set(path)
 
+    def _browse_audio_folder(self):
+        from tkinter import filedialog
+        path = filedialog.askdirectory(title="Select folder containing WAV files")
+        if path:
+            self._audio_folder_var.set(path)
+
     # ── CSV + search ──────────────────────────────────────────────────────────
 
     def _load_csv(self, path: str):
@@ -1266,15 +1388,20 @@ class CorpusBuilderUI:
     def _run_thread(self):
         csv_path     = self._csv_var.get()
         output_root  = self._out_var.get()
-        previews_dir = os.path.join(output_root, "previews")
+        audio_folder = self._audio_folder_var.get().strip()
+        previews_dir = audio_folder if audio_folder else os.path.join(output_root, "previews")
         grains_dir   = os.path.join(output_root, "grains")
 
         try:
             prev_len = int(self._prev_len_var.get())
             offset   = float(self._offset_var.get())
             duration = float(self._duration_var.get())
+            dur_min  = float(self._dur_min_var.get())
+            dur_max  = float(self._dur_max_var.get())
+            if dur_min > dur_max:
+                dur_min, dur_max = dur_max, dur_min
         except ValueError:
-            self._log_write("One of the number fields has an invalid value. Check that Download length, Offset, and Duration are all plain numbers (for example: 30, 5.0, 1.5).")
+            self._log_write("One of the number fields has an invalid value. Check that Download length, Offset, Duration, and Duration range are all plain numbers (for example: 30, 5.0, 1.5).")
             self.root.after(0, self._on_done)
             return
 
@@ -1290,15 +1417,31 @@ class CorpusBuilderUI:
         metadata = {}
         _strategy_wins.update({"energy": 0, "onsets": 0, "spectral": 0})
 
+        tracks_override = None
+        if self._random_sample_enabled.get():
+            import random as _r
+            try:
+                n = max(1, int(self._sample_count_var.get()))
+                pool = list(self._all_tracks)
+                tracks_override = _r.sample(pool, min(n, len(pool)))
+            except ValueError:
+                self._log_write("Invalid sample count — using all tracks.")
+
         with _PrintRedirector(self._log_queue):
             try:
-                if self._do_download.get():
+                if tracks_override is not None:
+                    print(f"Random sample: {len(tracks_override)} of {len(self._all_tracks)} tracks selected.")
+                if audio_folder:
+                    print(f"Audio folder set — skipping download, slicing from: {audio_folder}")
+                if self._do_download.get() and not audio_folder:
                     run_download(csv_path, previews_dir, prev_len, self._stop_event,
-                                 ai_opts=ai_opts, metadata=metadata)
+                                 ai_opts=ai_opts, metadata=metadata, tracks=tracks_override)
                 if self._do_slice.get() and not self._stop_event.is_set():
                     if os.path.isdir(previews_dir):
                         run_slice(previews_dir, grains_dir, offset, duration,
-                                  self._stop_event, ai_opts=ai_opts, metadata=metadata)
+                                  self._stop_event, ai_opts=ai_opts, metadata=metadata,
+                                  randomize_cut=self._randomize_cut_enabled.get(),
+                                  dur_min=dur_min, dur_max=dur_max, preview_length=prev_len)
                     else:
                         print("No previews folder found — run with Download enabled first.")
 
@@ -1332,6 +1475,16 @@ class CorpusBuilderUI:
         self._progress.set(0)
         self._start_btn.configure(state="normal")
         self._stop_btn.configure(state="disabled")
+
+    def _randomize(self):
+        import random as _r
+        self._prev_len_var.set(str(_r.randint(15, 60)))
+        self._offset_var.set(f"{_r.uniform(0.0, 25.0):.1f}")
+        self._duration_var.set(f"{_r.uniform(0.5, 5.0):.1f}")
+        self._ai_smart_grain.set(_r.choice([True, False]))
+        self._ai_detect_versions.set(_r.choice([True, False]))
+        self._ai_extract_feats.set(_r.choice([True, False]))
+        self._ai_cluster.set(_r.choice([True, False]))
 
     # ── Log ───────────────────────────────────────────────────────────────────
 
