@@ -117,10 +117,13 @@ output/
 
 ## About
 
-<!-- Write something here about yourself and the context for this tool. Example: -->
-<!-- Built by [Julian Green](https://juliangreenmusic.com) — electroacoustic composer and PhD candidate at the University of Oregon. -->
+**[jgreenmusic](https://github.com/jgreenmusic)**
 
-<!-- Feel free to add: what corpus-based tools you use this with (Max/MSP, CataRT, Kyma, etc.), links to pieces made with it, or anything else relevant. -->
+<!-- Feel free to add more: what corpus-based tools you use this with (Max/MSP, CataRT, Kyma, etc.), links to pieces made with it, or your website. -->
+
+---
+
+*Coded with [Claude Code](https://claude.ai/code)*
 
 ---
 

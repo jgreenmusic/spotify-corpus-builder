@@ -134,7 +134,7 @@ SETTINGS
     if checked.
 
 
-AI ANALYSIS (Note to self: I'm not sure if the AI Analysis feature is functioning properly. I am not a professional coder and used Claude Code to help me realize this tool in it's entirety) 
+AI ANALYSIS (Note to self: I'm not sure if the AI Analysis feature is functioning properly. I am not a professional coder and used Claude Code to help me realize this tool in it's entirety)
 ------------
 
   The AI section requires librosa, which setup.bat / setup.sh installs.
@@ -166,3 +166,17 @@ AI ANALYSIS (Note to self: I'm not sure if the AI Analysis feature is functionin
   NOTE: The first time librosa's smart grain selection runs, numba (its
   JIT compiler) takes 30-60 seconds to compile. The log will go quiet
   briefly -- this is normal. Subsequent runs are fast.
+
+
+OUTPUT STRUCTURE
+-----------------
+
+  output/
+    previews/        <-- downloaded WAVs (one per track)
+      Artist - Track Name.wav
+      ...
+    grains/          <-- sliced grains (ready for corpus use)
+      Artist - Track Name.wav
+      ...
+    metadata.json    <-- AI analysis results (if AI features are enabled)
+    coords.json      <-- CLAP embeddings (if CLAP is enabled)
