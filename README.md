@@ -123,10 +123,6 @@ output/
 
 ---
 
-*Coded with [Claude Code](https://claude.ai/code)*
-
----
-
 ## License
 
 <!-- Choose one and delete the others, or remove this section: -->
