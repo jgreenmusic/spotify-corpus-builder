@@ -66,6 +66,17 @@ def test_read_exportify_csv(tmp_path):
     assert t["spotify"]["genres"] == ["idm", "ambient"]
 
 
+def test_example_playlist_is_small_and_has_no_personal_columns():
+    path = scb.example_csv_path()
+    assert os.path.basename(path) == "example_playlist.csv"
+    tracks = scb.read_tracks(path)
+    assert 5 <= len(tracks) <= 20
+    assert all(t["artist"] and t["name"] and t.get("duration_ms") for t in tracks)
+    with open(path, encoding="utf-8-sig") as f:
+        header = f.readline()
+    assert "Added By" not in header and "Added At" not in header
+
+
 def test_parse_track_lines():
     tracks, urls = scb.parse_track_lines(
         "# comment\nAphex Twin - Xtal\nBoards of Canada – Roygbiv\nBurial\tArchangel\n"

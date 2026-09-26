@@ -36,6 +36,7 @@ jobs:
           --collect-all tkinterdnd2
           --add-data "translations.json:."
           --add-data "themes:themes"
+          --add-data "example_playlist.csv:."
           spotify_corpus_builder.py
 
       - name: Upload to release
@@ -43,6 +44,6 @@ jobs:
         with:
           files: |
             dist/${{ matrix.artifact }}
-            Liked_Songs.csv
+            example_playlist.csv
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

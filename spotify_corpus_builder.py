@@ -78,6 +78,18 @@ _SPOTIFY_NUM_COLS  = {"Popularity": "popularity", "Danceability": "danceability"
                       "Valence": "valence", "Tempo": "tempo", "Time Signature": "time_signature"}
 _PITCH_CLASSES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
 
+EXAMPLE_CSV = "example_playlist.csv"
+
+
+def example_csv_path() -> str:
+    """The bundled example playlist (next to the app, or inside a frozen build)."""
+    for folder in dict.fromkeys([APP_DIR, DATA_DIR]):
+        path = os.path.join(folder, EXAMPLE_CSV)
+        if os.path.isfile(path):
+            return path
+    return ""
+
+
 AUDIO_EXTS = (".wav", ".aif", ".aiff", ".flac", ".mp3", ".m4a", ".ogg", ".opus")
 
 
@@ -1030,6 +1042,8 @@ TRANSLATIONS = {
         "drop_hint": "Tip: you can also drag a CSV, a text file or a folder of audio onto this window.",
         "youtube_reading": "Reading {n} YouTube link(s)…",
         "import_empty": "No tracks found in that list.",
+        "example_tag": "(example)",
+        "example_loaded": "Loaded the {n}-track example playlist so you can try the app. To build a corpus from your own music, click Browse and pick your Spotify CSV from exportify.net, or click Paste… to type a list.",
         "tracks_section": "TRACKS",
         "search_placeholder": "Search artist or track…",
         "no_csv_msg": "No CSV loaded",
@@ -1297,7 +1311,10 @@ class CorpusBuilderUI:
         self._poll()
 
         csv_path = self._vars["csv_path"].get()
-        if csv_path and os.path.isfile(csv_path):
+        if not (csv_path and os.path.isfile(csv_path)):
+            csv_path = example_csv_path()     # first launch: start from the example
+            self._vars["csv_path"].set(csv_path)
+        if csv_path:
             self._load_csv(csv_path)
 
     def _T(self) -> dict:
@@ -1811,6 +1828,8 @@ class CorpusBuilderUI:
             self._update_start_state()
             return
         self._all_tracks = tracks
+        if os.path.basename(path) == EXAMPLE_CSV:
+            self._log_write(T["example_loaded"].format(n=len(tracks)))
         self._search_text = ""
         if self._search_entry.get():   # deleting an empty entry would wipe its placeholder
             self._search_entry.delete(0, "end")
@@ -1825,6 +1844,9 @@ class CorpusBuilderUI:
         ready = bool(self._all_tracks) or bool(self._vars["audio_folder"].get().strip())
         self._start_btn.configure(state="normal" if ready else "disabled")
 
+    def _is_example(self) -> bool:
+        return os.path.basename(self._vars["csv_path"].get()) == EXAMPLE_CSV
+
     def _on_search(self, *_):
         T = self._T()
         self._search_text = self._search_entry.get()
@@ -1835,7 +1857,10 @@ class CorpusBuilderUI:
             return
         if not q:
             self._refresh_tree(range(len(self._all_tracks)))
-            self._count_label.configure(text=T["status_loaded"].format(n=len(self._all_tracks)))
+            text = T["status_loaded"].format(n=len(self._all_tracks))
+            if self._is_example():
+                text += "  " + T["example_tag"]
+            self._count_label.configure(text=text)
             return
         matches = [i for i, t in enumerate(self._all_tracks)
                    if q in t["artist"].lower() or q in t["name"].lower()]
@@ -2033,8 +2058,9 @@ def main():
 
     parser = argparse.ArgumentParser(
         description="Download Spotify preview clips and slice them into short grains.")
-    parser.add_argument("--csv",            default=os.path.join(APP_DIR, "Liked_Songs.csv"),
-                        help="Exportify CSV, or a .txt file with one 'Artist - Title' or YouTube link per line")
+    parser.add_argument("--csv",            default=example_csv_path(),
+                        help="Your Exportify CSV, or a .txt file with one 'Artist - Title' or YouTube "
+                             "link per line (default: the 12-track example playlist)")
     parser.add_argument("--youtube",        action="append", default=[], metavar="URL",
                         help="YouTube video or playlist link (can be repeated; used instead of --csv)")
     parser.add_argument("--output",         default=os.path.join(APP_DIR, "output"))
@@ -2074,10 +2100,13 @@ def main():
     if args.youtube:
         tracks = [{"artist": "", "name": u, "youtube_url": u, "_unexpanded": True} for u in args.youtube]
     elif not args.audio_folder:
-        if not os.path.exists(args.csv):
-            print(f"ERROR: CSV not found at {args.csv}")
+        if not args.csv or not os.path.exists(args.csv):
+            print(f"ERROR: CSV not found at {args.csv or EXAMPLE_CSV}. Pass your own with --csv.")
             sys.exit(1)
         tracks = read_tracks(args.csv)
+        if os.path.basename(args.csv) == EXAMPLE_CSV:
+            print(f"Using the {len(tracks)}-track example playlist. Pass --csv your_playlist.csv "
+                  f"to build a corpus from your own music.")
         if args.sample > 0:
             tracks = random.sample(tracks, min(args.sample, len(tracks)))
             print(f"Random sample: {len(tracks)} tracks selected.")

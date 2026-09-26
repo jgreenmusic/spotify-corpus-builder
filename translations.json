@@ -64,7 +64,9 @@
     "cancel_btn": "Cancelar",
     "drop_hint": "Consejo: también puedes arrastrar un CSV, un archivo de texto o una carpeta de audio a esta ventana.",
     "youtube_reading": "Leyendo {n} enlace(s) de YouTube…",
-    "import_empty": "No se encontraron pistas en esa lista."
+    "import_empty": "No se encontraron pistas en esa lista.",
+    "example_tag": "(ejemplo)",
+    "example_loaded": "Se cargó la lista de ejemplo de {n} pistas para que pruebes la app. Para crear un corpus con tu propia música, pulsa Explorar y elige tu CSV de Spotify de exportify.net, o pulsa Pegar… para escribir una lista."
   },
   "Deutsch": {
     "window_title": "Spotify Corpus Builder",
@@ -130,7 +132,9 @@
     "cancel_btn": "Abbrechen",
     "drop_hint": "Tipp: Du kannst auch eine CSV, eine Textdatei oder einen Audio-Ordner auf dieses Fenster ziehen.",
     "youtube_reading": "Lese {n} YouTube-Link(s) …",
-    "import_empty": "In dieser Liste wurden keine Titel gefunden."
+    "import_empty": "In dieser Liste wurden keine Titel gefunden.",
+    "example_tag": "(Beispiel)",
+    "example_loaded": "Die Beispiel-Playlist mit {n} Titeln wurde geladen, damit du die App ausprobieren kannst. Für einen Korpus aus deiner eigenen Musik klicke auf Durchsuchen und wähle deine Spotify-CSV von exportify.net, oder klicke auf Einfügen…, um eine Liste einzugeben."
   },
   "Français": {
     "window_title": "Constructeur de corpus Spotify",
@@ -196,7 +200,9 @@
     "cancel_btn": "Annuler",
     "drop_hint": "Astuce : vous pouvez aussi glisser un CSV, un fichier texte ou un dossier audio sur cette fenêtre.",
     "youtube_reading": "Lecture de {n} lien(s) YouTube…",
-    "import_empty": "Aucune piste trouvée dans cette liste."
+    "import_empty": "Aucune piste trouvée dans cette liste.",
+    "example_tag": "(exemple)",
+    "example_loaded": "La playlist d'exemple de {n} pistes a été chargée pour essayer l'application. Pour créer un corpus avec votre propre musique, cliquez sur Parcourir et choisissez votre CSV Spotify d'exportify.net, ou cliquez sur Coller… pour saisir une liste."
   },
   "中文": {
     "window_title": "Spotify 语料库构建器",
@@ -262,7 +268,9 @@
     "cancel_btn": "取消",
     "drop_hint": "提示：也可以把 CSV、文本文件或音频文件夹拖到此窗口。",
     "youtube_reading": "正在读取 {n} 个 YouTube 链接…",
-    "import_empty": "该列表中没有找到曲目。"
+    "import_empty": "该列表中没有找到曲目。",
+    "example_tag": "（示例）",
+    "example_loaded": "已载入含 {n} 首曲目的示例播放列表，方便你试用。要用自己的音乐构建语料库，请点击“浏览”选择从 exportify.net 导出的 Spotify CSV，或点击“粘贴…”输入列表。"
   },
   "日本語": {
     "window_title": "Spotify コーパスビルダー",
@@ -328,6 +336,8 @@
     "cancel_btn": "キャンセル",
     "drop_hint": "ヒント：CSV、テキストファイル、音声フォルダをこのウィンドウにドラッグすることもできます。",
     "youtube_reading": "YouTube リンク {n} 件を読み込み中…",
-    "import_empty": "そのリストにトラックが見つかりませんでした。"
+    "import_empty": "そのリストにトラックが見つかりませんでした。",
+    "example_tag": "（サンプル）",
+    "example_loaded": "お試し用に {n} 曲のサンプルプレイリストを読み込みました。自分の音楽でコーパスを作るには、「参照」で exportify.net の Spotify CSV を選ぶか、「貼り付け…」でリストを入力してください。"
   }
 }

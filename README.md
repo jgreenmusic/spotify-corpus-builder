@@ -80,6 +80,10 @@ python3 spotify_corpus_builder.py --csv my_list.txt
 python3 spotify_corpus_builder.py --help
 ```
 
+### Example playlist vs. your own music
+
+The first time you open the app it loads `example_playlist.csv` — 12 well-known tracks from different genres — so you can try everything without downloading a large library. To build a corpus from your own music, load your own playlist (below) with **Browse**, or use **Paste…**. The app remembers whichever list you used last.
+
 ### Getting your Spotify CSV
 
 1. Go to [exportify.net](https://exportify.net)

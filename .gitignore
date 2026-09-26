@@ -6,3 +6,4 @@ build/
 dist/
 *.spec
 track lists/
+Liked_Songs.csv

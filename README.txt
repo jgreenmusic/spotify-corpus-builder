@@ -95,7 +95,8 @@ WHAT YOU NEED BEFORE RUNNING
 HOW TO EXPORT YOUR CSV FROM SPOTIFY
 -------------------------------------
 
-  To export your own:
+  The app starts with example_playlist.csv, a 12-track example so you can
+  try it without downloading hundreds of songs. To use your own music:
 
   1. Go to exportify.net
   2. Log in with Spotify
@@ -149,8 +150,8 @@ SETTINGS
 
   Random sample -- pick N tracks at random from the CSV
     Check this and set a count to draw a random subset from your CSV instead
-    of processing every track. Useful for testing with a large CSV like
-    Liked_Songs.csv without committing to the full run.
+    of processing every track. Useful for testing with a large playlist
+    without committing to the full run.
 
   Randomize cut per track -- duration min to max
     When checked, each track gets its own randomly chosen grain length
