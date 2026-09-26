@@ -1,0 +1,9 @@
+# Required
+yt-dlp
+customtkinter
+# Analysis, fast slicing and drag and drop (installed by setup.bat / setup.sh)
+librosa
+scikit-learn
+soundfile
+numpy
+tkinterdnd2

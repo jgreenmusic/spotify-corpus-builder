@@ -140,6 +140,17 @@ Analysis results are saved in `metadata.json` and reused on the next run, so onl
 
 ---
 
+## Tests
+
+```
+pip install pytest
+python -m pytest tests
+```
+
+The tests don't need the internet or a display. They also run on GitHub on every push.
+
+---
+
 ## Output Structure
 
 ```
