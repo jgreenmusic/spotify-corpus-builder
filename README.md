@@ -9,7 +9,7 @@ A desktop tool for downloading audio previews from any Spotify playlist CSV and 
 <!-- Write 2–3 sentences here describing what you use this for and why you built it. Example: "I built this for my PhD work at the University of Oregon to quickly assemble large audio corpora from Spotify playlists without manually downloading and editing hundreds of files." -->
 
 - Loads any Spotify playlist exported as a CSV
-- Searches YouTube for each track and downloads the first N seconds
+- Searches YouTube for each track, picks the result that best matches the song (length, title, official "Topic" uploads), and downloads N seconds of it
 - Slices each download into a short audio grain at a configurable offset and length
 - Optionally picks a random subset of tracks from a large CSV
 - Optionally randomizes the cut position and grain length per track for varied corpora
@@ -90,6 +90,7 @@ python3 spotify_corpus_builder.py --help
 | Setting | What it does |
 |---|---|
 | Download length | How many seconds to download from YouTube per track (default 30s) |
+| Download from ⅓ in | Start the download about a third of the way into the song instead of at the beginning, to skip intros |
 | Start cut at | Where in the preview to begin the grain (default 5s in) |
 | Cut length | How long each grain is (default 1.5s) |
 | Random sample | Pick N tracks at random from the CSV instead of all of them |
@@ -107,10 +108,12 @@ Requires librosa (installed by setup script). The app shows a ✓ in the AI sect
 
 | Feature | What it does |
 |---|---|
-| Smart grain selection | Analyzes each WAV with three strategies (energy peak, onset density, spectral variance) and picks the best moment to cut |
-| Flag wrong versions | Scores each download for live/cover indicators and logs suspicious results |
-| Extract audio features | Writes tempo, RMS energy, spectral centroid, key per track to `metadata.json` |
-| Cluster by similarity | Groups grains into similarity buckets using K-means after slicing |
+| Smart grain selection | Scores every possible cut for loudness, onset density and timbral movement, and cuts at the best combined moment (`--grain-strategy` picks just one) |
+| Best match / flag wrong versions | Compares the top 5 YouTube results to the song's length and title, prefers official "Topic" uploads, and flags likely live/cover/remix/sped-up versions. Doesn't need librosa |
+| Extract audio features | Writes tempo, RMS energy, spectral centroid and estimated key (major/minor) per track to `metadata.json` |
+| Cluster by similarity | Groups grains by timbre (MFCCs), picks the number of groups automatically, and copies each group into `grains_by_cluster/` |
+
+Spotify's own data from the CSV (key, tempo, energy, danceability, valence, genres, album, label…) is also saved to `metadata.json` for each track. It was measured on the full studio recording, so trust it over the estimates from a short clip.
 | CLAP embeddings | Optional — requires laion-clap (~2GB). Produces `coords.json` for spatial corpus browsers |
 
 Analysis results are saved in `metadata.json` and reused on the next run, so only new files are analysed.
@@ -125,7 +128,8 @@ Analysis results are saved in `metadata.json` and reused on the next run, so onl
 output/
   previews/       ← downloaded WAVs, one per track
   grains/         ← sliced grains, ready for corpus use
-  metadata.json   ← per track: Spotify URI, where the grain was cut, AI results
+  grains_by_cluster/cluster_01/ …  ← grains grouped by similarity (if clustering is on)
+  metadata.json   ← per track: Spotify data, which YouTube video was used, where the grain was cut, AI results
   coords.json     ← CLAP embeddings (if enabled)
 ```
 

@@ -45,9 +45,6 @@ except ImportError:
     print("yt-dlp is not installed. Run setup.bat (Windows) or setup.sh (Mac) to fix this.")
     sys.exit(1)
 
-_strategy_wins = {"energy": 0, "onsets": 0, "spectral": 0}
-
-
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -64,6 +61,17 @@ _TRACK_COLS    = ["Track Name", "track_name", "Song Name", "song_name", "Title",
 _ARTIST_COLS   = ["Artist Name(s)", "Artist Name", "artist_name", "artists", "Artist", "artist"]
 _URI_COLS      = ["Track URI", "track_uri", "uri", "spotify_uri"]
 _DURATION_COLS = ["Duration (ms)", "duration_ms", "Track Duration (ms)"]
+
+# Extra Exportify columns kept in metadata.json. Spotify measured these on the
+# full studio track, so they are more reliable than anything estimated from a clip.
+_SPOTIFY_TEXT_COLS = {"Album Name": "album", "Release Date": "release_date",
+                      "Record Label": "label", "Genres": "genres"}
+_SPOTIFY_NUM_COLS  = {"Popularity": "popularity", "Danceability": "danceability",
+                      "Energy": "energy", "Key": "key", "Mode": "mode", "Loudness": "loudness",
+                      "Speechiness": "speechiness", "Acousticness": "acousticness",
+                      "Instrumentalness": "instrumentalness", "Liveness": "liveness",
+                      "Valence": "valence", "Tempo": "tempo", "Time Signature": "time_signature"}
+_PITCH_CLASSES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
 
 AUDIO_EXTS = (".wav",)
 
@@ -116,6 +124,24 @@ def _find_col(row: dict, candidates: list) -> str:
     return ""
 
 
+def _spotify_fields(row: dict) -> dict:
+    out = {}
+    for col, key in _SPOTIFY_TEXT_COLS.items():
+        val = (row.get(col) or "").strip()
+        if val:
+            out[key] = [g.strip() for g in val.split(",")] if key == "genres" else val
+    for col, key in _SPOTIFY_NUM_COLS.items():
+        try:
+            num = float(row.get(col) or "")
+        except ValueError:
+            continue
+        out[key] = int(num) if num.is_integer() else num
+    if isinstance(out.get("key"), int) and 0 <= out["key"] < 12:
+        mode = {1: " major", 0: " minor"}.get(out.get("mode"), "")
+        out["key_name"] = _PITCH_CLASSES[out["key"]] + mode
+    return out
+
+
 def read_tracks(csv_path: str) -> list:
     """Parse a playlist CSV into track dicts. Rows without a name or artist are skipped."""
     tracks = []
@@ -133,6 +159,9 @@ def read_tracks(csv_path: str) -> list:
                 track["duration_ms"] = int(float(_find_col(row, _DURATION_COLS)))
             except ValueError:
                 pass
+            spotify = _spotify_fields(row)
+            if spotify:
+                track["spotify"] = spotify
             tracks.append(track)
     return tracks
 
@@ -162,33 +191,100 @@ def _short_error(e: Exception) -> str:
     return msg if len(msg) <= 160 else msg[:157] + "..."
 
 
-def download_track(artist: str, name: str, wav_path: str, preview_length: int) -> tuple:
-    """Returns (ok, error_message)."""
-    primary_artist = artist.split(";")[0].strip()
-    query = f"{primary_artist} - {name}"
+# Words in a YouTube title that suggest a different version than the studio track,
+# unless the Spotify track name contains them too.
+_VERSION_WORDS = ["live", "cover", "remix", "sped up", "slowed", "reverb", "nightcore",
+                  "karaoke", "instrumental", "8d", "acoustic", "reaction", "tutorial",
+                  "extended", "mashup", "bass boosted"]
+
+
+def score_candidate(entry: dict, track: dict) -> tuple:
+    """Score a YouTube search result against a CSV track. Returns (score, flags)."""
+    title = (entry.get("title") or "").lower()
+    name  = track["name"].lower()
+    flags = [w for w in _VERSION_WORDS
+             if re.search(rf"\b{re.escape(w)}\b", title)
+             and not re.search(rf"\b{re.escape(w)}\b", name)]
+    score = -3.0 * len(flags)
+
+    got, want = entry.get("duration"), track.get("duration_ms")
+    if got and want:
+        diff = abs(float(got) - want / 1000.0)
+        score -= min(diff, 120.0) / 10.0          # 10 s off costs one point
+        if diff > 15:
+            flags.append(f"length off by {diff:.0f}s")
+
+    channel = (entry.get("channel") or entry.get("uploader") or "").lower()
+    if channel.endswith(" - topic"):              # YouTube's auto-generated studio uploads
+        score += 2.0
+    primary_artist = track["artist"].split(";")[0].strip().lower()
+    if primary_artist and primary_artist in channel:
+        score += 1.0
+    return score, flags
+
+
+def _search_youtube(query: str, n: int) -> list:
+    opts = {"quiet": True, "no_warnings": True, "extract_flat": "in_playlist",
+            "logger": _QuietLogger()}
+    with yt_dlp.YoutubeDL(opts) as ydl:
+        info = ydl.extract_info(f"ytsearch{n}:{query}", download=False)
+    return [e for e in (info or {}).get("entries") or [] if e]
+
+
+def _download_start(track: dict, entry: dict, preview_length: int, from_middle: bool) -> float:
+    """Where to start the download: 0, or about a third of the way into the song."""
+    if not from_middle:
+        return 0.0
+    length = entry.get("duration") or (track.get("duration_ms") or 0) / 1000.0
+    if not length or length <= preview_length:
+        return 0.0
+    return round(min(length * 0.33, length - preview_length), 1)
+
+
+def download_track(track: dict, wav_path: str, preview_length: int,
+                   match_versions: bool = True, from_middle: bool = False) -> tuple:
+    """Search YouTube, pick the best result, download part of it as WAV.
+
+    Returns (ok, error_message, info). info describes the chosen video.
+    """
+    primary_artist = track["artist"].split(";")[0].strip()
+    query = f"{primary_artist} - {track['name']}"
     tmp_base = wav_path[:-4] + "_tmp"
+    info = {}
 
-    ydl_opts = {
-        "format": "bestaudio/best",
-        "outtmpl": tmp_base + ".%(ext)s",
-        "quiet": True,
-        "no_warnings": True,
-        "noprogress": True,
-        "logger": _QuietLogger(),
-        "download_ranges": yt_dlp.utils.download_range_func([], [[0, preview_length]]),
-        "force_keyframes_at_cuts": True,
-        "postprocessors": [{"key": "FFmpegExtractAudio", "preferredcodec": "wav"}],
-        "postprocessor_args": {"ffmpegextractaudio": ["-ar", "44100", "-ac", "2"]},
-    }
-
-    err = "no audio was produced"
     try:
+        candidates = _search_youtube(query, 5 if match_versions else 1)
+        if not candidates:
+            return False, "no YouTube results", info
+        scored = [(score_candidate(e, track), i, e) for i, e in enumerate(candidates)]
+        (score, flags), _, best = max(scored, key=lambda s: (s[0][0], -s[1]))
+        url = best.get("url") or best.get("webpage_url") or f"https://www.youtube.com/watch?v={best['id']}"
+        start = _download_start(track, best, preview_length, from_middle)
+        info = {"youtube_url": url, "youtube_title": best.get("title"),
+                "youtube_channel": best.get("channel") or best.get("uploader"),
+                "download_start": start}
+        if match_versions:
+            info["version_flag"] = ", ".join(flags) if flags else "ok"
+
+        ydl_opts = {
+            "format": "bestaudio/best",
+            "outtmpl": tmp_base + ".%(ext)s",
+            "quiet": True,
+            "no_warnings": True,
+            "noprogress": True,
+            "logger": _QuietLogger(),
+            "download_ranges": yt_dlp.utils.download_range_func([], [[start, start + preview_length]]),
+            "force_keyframes_at_cuts": True,
+            "postprocessors": [{"key": "FFmpegExtractAudio", "preferredcodec": "wav"}],
+            "postprocessor_args": {"ffmpegextractaudio": ["-ar", "44100", "-ac", "2"]},
+        }
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            ydl.download([f"ytsearch1:{query}"])
+            ydl.download([url])
         tmp_wav = tmp_base + ".wav"
         if os.path.exists(tmp_wav):
             shutil.move(tmp_wav, wav_path)
-            return True, ""
+            return True, "", info
+        err = "no audio was produced"
     except Exception as e:
         err = _short_error(e)
 
@@ -199,17 +295,20 @@ def download_track(artist: str, name: str, wav_path: str, preview_length: int) -
                 os.remove(f)
             except OSError:
                 pass
-    return False, err
+    return False, err, info
 
 
 def run_download(tracks: list, previews_dir: str, preview_length: int,
-                 stop_event: threading.Event = None):
+                 stop_event: threading.Event = None, metadata: dict = None,
+                 match_versions: bool = True, from_middle: bool = False):
     os.makedirs(previews_dir, exist_ok=True)
     stop_event = stop_event or threading.Event()
+    metadata = metadata if metadata is not None else {}
 
-    print(f"\n=== DOWNLOAD ({len(tracks)} tracks -> {preview_length}s previews) ===")
+    where = "from ~1/3 into each song" if from_middle else "from the start"
+    print(f"\n=== DOWNLOAD ({len(tracks)} tracks -> {preview_length}s previews, {where}) ===")
     print(f"Output: {previews_dir}\n")
-    downloaded = skipped = failed = 0
+    downloaded = skipped = failed = flagged = 0
     fails_in_a_row = 0
     hinted = False
 
@@ -224,9 +323,17 @@ def run_download(tracks: list, previews_dir: str, preview_length: int,
             skipped += 1
             continue
         print(f"  [{i}/{len(tracks)}] [fetch]   {track['artist']} - {track['name']}")
-        ok, err = download_track(track["artist"], track["name"], wav_path, preview_length)
+        ok, err, info = download_track(track, wav_path, preview_length,
+                                       match_versions=match_versions, from_middle=from_middle)
         if ok:
-            print(f"  [{i}/{len(tracks)}] [done]    {filename}.wav")
+            metadata.setdefault(filename, {}).update(info)
+            flag = info.get("version_flag", "ok")
+            if flag != "ok":
+                flagged += 1
+                print(f"  [{i}/{len(tracks)}] [check]   {filename}.wav  — {flag}  "
+                      f"(got: {info.get('youtube_title')})")
+            else:
+                print(f"  [{i}/{len(tracks)}] [done]    {filename}.wav")
             downloaded += 1
             fails_in_a_row = 0
         else:
@@ -240,6 +347,9 @@ def run_download(tracks: list, previews_dir: str, preview_length: int,
         stop_event.wait(1)  # be polite to YouTube, but stay responsive to Stop
 
     print(f"\nDownload complete - downloaded: {downloaded}  skipped: {skipped}  failed: {failed}")
+    if flagged:
+        print(f"{flagged} downloads may be the wrong version — see [check] lines above, "
+              f"or 'version_flag' in metadata.json.")
 
 
 # ── Step 2: Slice ─────────────────────────────────────────────────────────────
@@ -324,6 +434,11 @@ def run_slice(previews_dir: str, grains_dir: str, files: list, offset: float, du
 
 # ── AI Analysis ───────────────────────────────────────────────────────────────
 
+GRAIN_STRATEGIES = ["auto", "energy", "onsets", "spectral"]
+_ANALYSIS_SR = 22050   # plenty for these features and ~2x faster than 44.1k
+_HOP = 512
+
+
 def _librosa_available() -> bool:
     try:
         import librosa  # noqa: F401
@@ -332,32 +447,138 @@ def _librosa_available() -> bool:
         return False
 
 
+def _smart_grain_tag(ai_opts: dict) -> str:
+    return f"{ai_opts.get('duration', 1.5)}|{ai_opts.get('grain_strategy', 'auto')}"
+
+
 def _needs_analysis(entry: dict, ai_opts: dict) -> bool:
     return bool(
         (ai_opts.get("extract_features") and "features" not in entry)
-        or (ai_opts.get("smart_grain")
-            and entry.get("suggested_offset_for") != ai_opts.get("duration"))
-        or (ai_opts.get("detect_versions") and "version_flag" not in entry))
+        or (ai_opts.get("smart_grain") and entry.get("suggested_offset_for") != _smart_grain_tag(ai_opts)))
+
+
+def _window_means(x, win: int):
+    """Mean of every length-`win` window of x (window i covers x[i:i+win])."""
+    import numpy as np
+    c = np.concatenate([[0.0], np.cumsum(x, dtype=float)])
+    return (c[win:] - c[:-win]) / win
+
+
+# Krumhansl-Schmuckler key profiles
+_KEY_NAMES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
+_MAJOR_PROFILE = [6.35, 2.23, 3.48, 2.33, 4.38, 4.09, 2.52, 5.19, 2.39, 3.66, 2.29, 2.88]
+_MINOR_PROFILE = [6.33, 2.68, 3.52, 5.38, 2.60, 3.53, 2.54, 4.75, 3.98, 2.69, 3.34, 3.17]
+
+
+def estimate_key(chroma_mean) -> str:
+    """Best-matching major/minor key for a 12-bin mean chroma vector."""
+    import numpy as np
+    best = (-2.0, "")
+    for mode, profile in (("major", _MAJOR_PROFILE), ("minor", _MINOR_PROFILE)):
+        for tonic in range(12):
+            r = float(np.corrcoef(np.roll(profile, tonic), chroma_mean)[0, 1])
+            if r > best[0]:
+                best = (r, f"{_KEY_NAMES[tonic]} {mode}")
+    return best[1]
+
+
+def analyze_file(wav_path: str, features: bool = False, grain_duration: float = None,
+                 strategy: str = "auto") -> dict:
+    """Load a file once and compute everything requested from the same frames."""
+    import librosa
+    import numpy as np
+    y, sr = librosa.load(wav_path, sr=_ANALYSIS_SR, mono=True)
+    if len(y) == 0:
+        return {}
+    rms      = librosa.feature.rms(y=y, hop_length=_HOP)[0]
+    centroid = librosa.feature.spectral_centroid(y=y, sr=sr, hop_length=_HOP)[0]
+    onset    = librosa.onset.onset_strength(y=y, sr=sr, hop_length=_HOP)
+    n = min(len(rms), len(centroid), len(onset))
+    rms, centroid, onset = rms[:n], centroid[:n], onset[:n]
+    out = {}
+
+    if features:
+        tempo = librosa.beat.beat_track(onset_envelope=onset, sr=sr, hop_length=_HOP)[0]
+        chroma = librosa.feature.chroma_cqt(y=y, sr=sr, hop_length=_HOP)
+        out["features"] = {
+            "tempo": round(float(np.atleast_1d(tempo)[0]), 1),
+            "rms_energy": float(rms.mean()),
+            "spectral_centroid": float(centroid.mean()),
+            "zero_crossing_rate": float(librosa.feature.zero_crossing_rate(y, hop_length=_HOP)[0].mean()),
+            "estimated_key": estimate_key(chroma.mean(axis=1)),
+        }
+
+    if grain_duration:
+        out["suggested_offset"], out["grain_strategy"] = _best_grain(
+            y, sr, rms, centroid, onset, grain_duration, strategy)
+    return out
+
+
+def _best_grain(y, sr, rms, centroid, onset_env, duration: float, strategy: str) -> tuple:
+    """Pick the start time of the most interesting `duration`-second window.
+
+    energy   = loudest window
+    onsets   = most note/drum onsets
+    spectral = most timbral movement (variance of spectral centroid)
+    auto     = sum of all three, each standardised so none dominates
+    """
+    import librosa
+    import numpy as np
+    total = len(y) / sr
+    if total <= duration:
+        return 0.0, "whole file"
+    win = max(1, int(round(duration * sr / _HOP)))
+    n = len(rms)
+    margin = 2.0 if total >= duration + 4.0 else 0.0   # avoid fade-ins/outs at the edges
+    first = int(margin * sr / _HOP)
+    last = min(int((total - margin - duration) * sr / _HOP), n - win)
+    if last <= first:
+        return round((total - duration) / 2, 3), "middle"
+
+    onset_frames = librosa.onset.onset_detect(onset_envelope=onset_env, sr=sr, hop_length=_HOP)
+    onset_mask = np.zeros(n)
+    onset_mask[onset_frames[onset_frames < n]] = 1.0
+    m1 = _window_means(centroid, win)
+    curves = {
+        "energy":   _window_means(rms, win),
+        "onsets":   _window_means(onset_mask, win),
+        "spectral": np.maximum(_window_means(centroid ** 2, win) - m1 ** 2, 0.0),
+    }
+    span = slice(first, last + 1)
+    if strategy in curves:
+        score = curves[strategy][span]
+    else:
+        strategy = "auto"
+        score = np.zeros(last + 1 - first)
+        for c in curves.values():
+            c = c[span]
+            sd = c.std()
+            if sd > 0:
+                score += (c - c.mean()) / sd
+    best = first + int(np.argmax(score))
+    return round(best * _HOP / sr, 3), strategy
 
 
 def _run_ai_on_track(wav_path: str, key: str, ai_opts: dict, metadata: dict):
     """Fill in whichever requested analysis results this track's entry is missing."""
     entry = metadata.setdefault(key, {})
-    if ai_opts.get("extract_features") and "features" not in entry:
-        feats = analyze_audio(wav_path)
-        if feats:
-            entry["features"] = feats
-            print(f"  [AI] {key[:50]}: tempo={feats.get('tempo', 0):.0f} key={feats.get('estimated_key', '?')}")
-    duration = ai_opts.get("duration", 1.5)
-    if ai_opts.get("smart_grain") and entry.get("suggested_offset_for") != duration:
-        entry["suggested_offset"] = find_best_grain(wav_path, duration)
-        entry["suggested_offset_for"] = duration
-    if ai_opts.get("detect_versions") and "version_flag" not in entry:
-        result = detect_wrong_version(wav_path)
-        entry["version_flag"] = result.get("flag", "ok")
-        entry["version_confidence"] = result.get("confidence", 0.0)
-        if result.get("flag", "ok") != "ok":
-            print(f"  [AI] {key[:50]}: [{result['flag']}] conf={result['confidence']:.2f}")
+    want_feats = bool(ai_opts.get("extract_features")) and "features" not in entry
+    want_grain = bool(ai_opts.get("smart_grain")) and \
+        entry.get("suggested_offset_for") != _smart_grain_tag(ai_opts)
+    try:
+        result = analyze_file(wav_path, features=want_feats,
+                              grain_duration=ai_opts.get("duration", 1.5) if want_grain else None,
+                              strategy=ai_opts.get("grain_strategy", "auto"))
+    except Exception as e:
+        print(f"  [AI] could not analyse {key[:50]}: {_short_error(e)}")
+        return
+    if "features" in result:
+        entry["features"] = feats = result["features"]
+        print(f"  [AI] tempo={feats['tempo']:.0f}  key={feats['estimated_key']}")
+    if "suggested_offset" in result:
+        entry["suggested_offset"] = result["suggested_offset"]
+        entry["suggested_offset_for"] = _smart_grain_tag(ai_opts)
+        print(f"  [AI] best grain at {result['suggested_offset']:.1f}s [{result['grain_strategy']}]")
 
 
 def run_analysis(previews_dir: str, files: list, ai_opts: dict, metadata: dict,
@@ -367,7 +588,7 @@ def run_analysis(previews_dir: str, files: list, ai_opts: dict, metadata: dict,
     Runs as its own pass so it works the same whether the audio was just
     downloaded, downloaded in an earlier session, or came from an audio folder.
     """
-    if not any(ai_opts.get(k) for k in ("smart_grain", "detect_versions", "extract_features")):
+    if not (ai_opts.get("smart_grain") or ai_opts.get("extract_features")):
         return
     if not _librosa_available():
         print("  [AI] librosa is not installed. Run setup.bat or setup.sh to enable AI analysis.")
@@ -385,202 +606,84 @@ def run_analysis(previews_dir: str, files: list, ai_opts: dict, metadata: dict,
         _run_ai_on_track(os.path.join(previews_dir, fname), _stem(fname), ai_opts, metadata)
 
 
-def _tempo(y, sr) -> float:
-    """Newer librosa returns tempo as a 1-element array; older returns a scalar."""
+def _grain_features(path: str):
+    """Timbre summary of a grain: MFCC means/stds plus brightness, loudness, noisiness."""
     import librosa
     import numpy as np
-    tempo, _ = librosa.beat.beat_track(y=y, sr=sr)
-    return float(np.atleast_1d(tempo)[0])
+    y, sr = librosa.load(path, sr=_ANALYSIS_SR, mono=True)
+    if len(y) < _HOP:
+        return None
+    mfcc = librosa.feature.mfcc(y=y, sr=sr, n_mfcc=13, hop_length=_HOP)
+    return np.concatenate([
+        mfcc.mean(axis=1), mfcc.std(axis=1),
+        [librosa.feature.spectral_centroid(y=y, sr=sr, hop_length=_HOP).mean(),
+         librosa.feature.rms(y=y, hop_length=_HOP).mean(),
+         librosa.feature.spectral_flatness(y=y, hop_length=_HOP).mean()],
+    ])
 
 
-def analyze_audio(wav_path: str) -> dict:
+def cluster_corpus(grains_dir: str, max_clusters: int = 8) -> dict:
+    """Group grains by timbre. The number of groups is chosen by silhouette score."""
     try:
-        import librosa
-        import numpy as np
-        y, sr = librosa.load(wav_path, sr=None, mono=True)
-        tempo = _tempo(y, sr)
-        rms = float(np.mean(librosa.feature.rms(y=y)))
-        sc = float(np.mean(librosa.feature.spectral_centroid(y=y, sr=sr)))
-        zcr = float(np.mean(librosa.feature.zero_crossing_rate(y)))
-        chroma = librosa.feature.chroma_cqt(y=y, sr=sr)
-        key_idx = int(np.argmax(np.mean(chroma, axis=1)))
-        keys = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
-        return {
-            "tempo": float(tempo),
-            "rms_energy": rms,
-            "spectral_centroid": sc,
-            "zero_crossing_rate": zcr,
-            "estimated_key": keys[key_idx],
-        }
-    except Exception:
-        return {}
-
-
-def find_best_grain(wav_path: str, duration: float) -> float:
-    try:
-        import librosa
-        import numpy as np
-        y, sr = librosa.load(wav_path, sr=None, mono=True)
-        total_dur = len(y) / sr
-        margin = 2.0
-
-        if total_dur < duration + 2 * margin:
-            return max(0.0, total_dur / 4)
-
-        hop = 512
-        win_f = max(1, int(duration * sr) // hop)
-        start_f = int(margin * sr) // hop
-        end_f = int((total_dur - margin - duration) * sr) // hop
-
-        if start_f >= end_f:
-            return margin
-
-        n = min(end_f, len(librosa.feature.rms(y=y, hop_length=hop)[0]) - win_f)
-
-        # Strategy 1: max RMS energy
-        rms = librosa.feature.rms(y=y, hop_length=hop)[0]
-        energy_scores = [float(np.mean(rms[i:i + win_f])) for i in range(start_f, n)]
-        best_e_i = int(np.argmax(energy_scores)) if energy_scores else 0
-        mean_e = float(np.mean(energy_scores)) if energy_scores else 1e-9
-        energy_conf = (energy_scores[best_e_i] - mean_e) / (mean_e + 1e-9) if energy_scores else 0.0
-
-        # Strategy 2: max onset density
-        onset_frames = librosa.onset.onset_detect(y=y, sr=sr, hop_length=hop)
-        onset_counts = [int(np.sum((onset_frames >= i) & (onset_frames < i + win_f)))
-                        for i in range(start_f, n)]
-        best_o_i = int(np.argmax(onset_counts)) if onset_counts else 0
-        mean_o = float(np.mean(onset_counts)) if onset_counts else 0.0
-        onset_conf = (onset_counts[best_o_i] - mean_o) / (mean_o + 1.0) if onset_counts else 0.0
-
-        # Strategy 3: max spectral centroid variance
-        sc_frames = librosa.feature.spectral_centroid(y=y, sr=sr, hop_length=hop)[0]
-        sc_n = min(n, len(sc_frames) - win_f)
-        sc_scores = [float(np.var(sc_frames[i:i + win_f])) for i in range(start_f, sc_n)]
-        best_sc_i = int(np.argmax(sc_scores)) if sc_scores else 0
-        mean_sc = float(np.mean(sc_scores)) if sc_scores else 1e-9
-        sc_conf = (sc_scores[best_sc_i] - mean_sc) / (mean_sc + 1e-9) if sc_scores else 0.0
-
-        strategies = {
-            "energy":   (best_e_i,  energy_conf),
-            "onsets":   (best_o_i,  onset_conf),
-            "spectral": (best_sc_i, sc_conf),
-        }
-
-        # Boost preferred strategy slightly to act as tiebreaker
-        config = load_config()
-        preferred = config.get("preferred_grain_strategy", "energy")
-        boosted = {
-            k: (idx, conf + (0.05 if k == preferred else 0.0))
-            for k, (idx, conf) in strategies.items()
-        }
-
-        winner_name = max(boosted, key=lambda k: boosted[k][1])
-        winner_f_i = strategies[winner_name][0]
-        winner_offset = float((start_f + winner_f_i) * hop) / sr
-
-        _strategy_wins[winner_name] = _strategy_wins.get(winner_name, 0) + 1
-        print(f"  [AI] best grain at {winner_offset:.1f}s [{winner_name}]")
-        return winner_offset
-    except Exception:
-        return 5.0
-
-
-def detect_wrong_version(wav_path: str) -> dict:
-    try:
-        import librosa
-        import numpy as np
-        y, sr = librosa.load(wav_path, sr=None, mono=True)
-
-        rms = librosa.feature.rms(y=y)[0]
-        energy_var = float(np.var(rms))
-        zcr = librosa.feature.zero_crossing_rate(y)[0]
-        zcr_var = float(np.var(zcr))
-        sf = librosa.feature.spectral_flatness(y=y)[0]
-        mean_flatness = float(np.mean(sf))
-
-        live_score = 0.0
-        if energy_var > 0.005:
-            live_score += 0.4
-        if zcr_var > 0.002:
-            live_score += 0.3
-        if mean_flatness < 0.01:
-            live_score += 0.3
-
-        cover_score = 0.0
-        if mean_flatness > 0.1:
-            cover_score += 0.4
-        try:
-            tempo = _tempo(y, sr)
-            if float(tempo) < 40 or float(tempo) > 200:
-                cover_score += 0.3
-        except Exception:
-            pass
-
-        if live_score > cover_score and live_score >= 0.65:
-            return {"flag": "live?", "confidence": round(live_score, 2),
-                    "reason": "high energy variance and zcr variance"}
-        if cover_score >= 0.65:
-            return {"flag": "cover?", "confidence": round(cover_score, 2),
-                    "reason": "unusual spectral profile"}
-        return {"flag": "ok", "confidence": round(max(live_score, cover_score), 2), "reason": ""}
-    except Exception:
-        return {"flag": "ok", "confidence": 0.0, "reason": ""}
-
-
-def cluster_corpus(grains_dir: str, n_clusters: int = 5) -> dict:
-    try:
-        import librosa
         import numpy as np
         from sklearn.cluster import KMeans
+        from sklearn.metrics import silhouette_score
         from sklearn.preprocessing import StandardScaler
     except ImportError:
         print("  [AI] librosa or scikit-learn not installed. Run setup.bat or setup.sh.")
         return {}
     try:
-        wav_files = sorted(f for f in os.listdir(grains_dir) if f.lower().endswith(".wav"))
+        wav_files = _list_audio(grains_dir)
         if not wav_files:
             return {}
-
-        print(f"  [AI] Clustering {len(wav_files)} grains...")
-        features = []
-        valid_files = []
+        print(f"\n=== CLUSTER ({len(wav_files)} grains) ===")
+        rows, names = [], []
         for fname in wav_files:
-            path = os.path.join(grains_dir, fname)
             try:
-                y, sr = librosa.load(path, sr=None, mono=True)
-                rms = float(np.mean(librosa.feature.rms(y=y)))
-                sc = float(np.mean(librosa.feature.spectral_centroid(y=y, sr=sr)))
-                zcr = float(np.mean(librosa.feature.zero_crossing_rate(y)))
-                tempo = _tempo(y, sr)
-                features.append([rms, sc, zcr, float(tempo)])
-                valid_files.append(fname)
+                feats = _grain_features(os.path.join(grains_dir, fname))
             except Exception:
-                pass
+                feats = None
+            if feats is not None:
+                rows.append(feats)
+                names.append(fname)
 
-        if len(valid_files) < 2:
-            return {f: 0 for f in valid_files}
+        if len(names) < 4:
+            return {f: 0 for f in names}
 
-        k = max(2, min(n_clusters, len(valid_files) // 20))
-        X = StandardScaler().fit_transform(features)
-        labels = KMeans(n_clusters=k, n_init=10, random_state=42).fit_predict(X)
-        print(f"  [AI] Clustered into {k} groups.")
-        return {fname: int(label) for fname, label in zip(valid_files, labels)}
+        X = StandardScaler().fit_transform(np.array(rows))
+        best = None
+        for k in range(2, min(max_clusters, len(names) - 1) + 1):
+            labels = KMeans(n_clusters=k, n_init=10, random_state=42).fit_predict(X)
+            score = silhouette_score(X, labels, sample_size=min(len(names), 2000), random_state=42)
+            if best is None or score > best[0]:
+                best = (score, k, labels)
+        score, k, labels = best
+        print(f"  [AI] Clustered into {k} groups (silhouette {score:.2f}; higher = better separated).")
+        return {fname: int(label) for fname, label in zip(names, labels)}
     except Exception as e:
         print(f"  [AI] Clustering failed: {e}")
         return {}
 
 
+def export_cluster_folders(grains_dir: str, output_root: str, clusters: dict):
+    """Copy grains into grains_by_cluster/cluster_N/ so each group can be loaded on its own."""
+    dest = os.path.join(output_root, "grains_by_cluster")
+    shutil.rmtree(dest, ignore_errors=True)
+    for fname, cid in clusters.items():
+        folder = os.path.join(dest, f"cluster_{cid + 1:02d}")
+        os.makedirs(folder, exist_ok=True)
+        shutil.copy2(os.path.join(grains_dir, fname), os.path.join(folder, fname))
+    print(f"  [AI] Grains copied into cluster folders: {dest}")
+
+
 def run_clap_analysis(grains_dir: str, output_dir: str) -> None:
     try:
-        import laion_clap  # noqa: F401
+        import laion_clap
     except ImportError:
         print("  [CLAP] laion-clap is not installed. Install it separately and re-run.")
         print("         Note: CLAP requires a 2GB model download on first use.")
         return
     try:
-        import json as _json
-        import numpy as np
-        import laion_clap
         model = laion_clap.CLAP_Module(enable_fusion=False)
         model.load_ckpt()
         wav_files = sorted(f for f in os.listdir(grains_dir) if f.lower().endswith(".wav"))
@@ -600,7 +703,7 @@ def run_clap_analysis(grains_dir: str, output_dir: str) -> None:
                   for i, fname in enumerate(wav_files)}
         out_path = os.path.join(output_dir, "coords.json")
         with open(out_path, "w", encoding="utf-8") as fh:
-            _json.dump(result, fh, indent=2)
+            json.dump(result, fh, indent=2)
         print(f"  [CLAP] coords.json saved to {out_path}")
     except Exception as e:
         print(f"  [CLAP] Error: {e}")
@@ -619,7 +722,8 @@ def run_pipeline(output_root: str, tracks: list = None, audio_folder: str = "",
                  preview_length: int = 30, offset: float = 5.0, duration: float = 1.5,
                  do_download: bool = True, do_slice: bool = True,
                  randomize_cut: bool = False, dur_min: float = 0.5, dur_max: float = 3.0,
-                 fade_ms: float = 5.0, seed=None, ai_opts: dict = None,
+                 fade_ms: float = 5.0, seed=None, match_versions: bool = True,
+                 from_middle: bool = False, ai_opts: dict = None,
                  stop_event: threading.Event = None):
     """Download -> analyse -> slice -> cluster. Shared by the GUI and the CLI.
 
@@ -640,7 +744,6 @@ def run_pipeline(output_root: str, tracks: list = None, audio_folder: str = "",
         ai_opts["smart_grain"] = False
 
     metadata = load_metadata(output_root)
-    _strategy_wins.update({"energy": 0, "onsets": 0, "spectral": 0})
 
     if audio_folder:
         previews_dir = audio_folder
@@ -649,7 +752,8 @@ def run_pipeline(output_root: str, tracks: list = None, audio_folder: str = "",
     else:
         previews_dir = os.path.join(output_root, "previews")
         if do_download:
-            run_download(tracks, previews_dir, preview_length, stop_event)
+            run_download(tracks, previews_dir, preview_length, stop_event, metadata=metadata,
+                         match_versions=match_versions, from_middle=from_middle)
         files, seen = [], set()
         for t in tracks:
             key = track_filename(t)
@@ -658,7 +762,7 @@ def run_pipeline(output_root: str, tracks: list = None, audio_folder: str = "",
             seen.add(key)
             files.append(key + ".wav")
             entry = metadata.setdefault(key, {})
-            entry.update({k: t[k] for k in ("artist", "name", "uri", "duration_ms") if k in t})
+            entry.update({k: t[k] for k in ("artist", "name", "uri", "duration_ms", "spotify") if k in t})
 
     if not files:
         print("No audio files to process." +
@@ -678,16 +782,14 @@ def run_pipeline(output_root: str, tracks: list = None, audio_folder: str = "",
         clusters = cluster_corpus(grains_dir)
         for fname, cluster_id in clusters.items():
             metadata.setdefault(_stem(fname), {})["cluster"] = cluster_id
+        if clusters:
+            export_cluster_folders(grains_dir, output_root, clusters)
 
     if not stop_event.is_set() and ai_opts.get("clap") and os.path.isdir(grains_dir):
         run_clap_analysis(grains_dir, output_root)
 
     if metadata:
         save_metadata(output_root, metadata)
-
-    if any(_strategy_wins.values()):
-        preferred = max(_strategy_wins, key=_strategy_wins.get)
-        save_config({"preferred_grain_strategy": preferred})
 
     print(f"\nAll done.  Previews: {previews_dir}  |  Grains: {grains_dir}")
 
@@ -734,7 +836,7 @@ TRANSLATIONS = {
         ),
         "ai_section":            "AI ANALYSIS",
         "smart_grain_check":     "Smart grain selection  (find the best moment automatically)",
-        "detect_versions_check": "Flag suspected wrong versions  (live recordings, covers)",
+        "detect_versions_check": "Pick the best YouTube match and flag likely wrong versions  (checks titles and song length)",
         "extract_features_check":"Extract audio features  (tempo, energy, key per track)",
         "cluster_check":         "Cluster corpus by similarity  (groups grains after slicing)",
         "clap_check":            "CLAP embeddings  (optional — requires laion-clap, ~2GB model)",
@@ -1249,6 +1351,12 @@ class CorpusBuilderUI:
             variable=self._do_download, font=ctk.CTkFont(size=14))
         self._step1_chk.pack(anchor="w", pady=(0, 8))
 
+        self._from_middle = _tk2.BooleanVar(value=False)
+        ctk.CTkCheckBox(
+            steps_frame, text="Download from about a third of the way into each song  (skips intros)",
+            variable=self._from_middle, font=ctk.CTkFont(size=14),
+        ).pack(anchor="w", padx=(28, 0), pady=(0, 8))
+
         self._step2_chk = ctk.CTkCheckBox(
             steps_frame, text=T["step2_check"],
             variable=self._do_slice, font=ctk.CTkFont(size=14))
@@ -1370,7 +1478,7 @@ class CorpusBuilderUI:
         self._ai_requires_note.pack(anchor="w", padx=16, pady=(0, 12))
 
         if not self._librosa_ok:
-            for chk in (self._ai_smart_grain_chk, self._ai_detect_versions_chk,
+            for chk in (self._ai_smart_grain_chk,
                         self._ai_extract_feats_chk, self._ai_cluster_chk, self._ai_clap_chk):
                 chk.configure(state="disabled")
 
@@ -1423,7 +1531,6 @@ class CorpusBuilderUI:
     def _style_treeview(self):
         """Style the ttk Treeview to match the current CTk theme."""
         import customtkinter as ctk
-        from tkinter import ttk
 
         try:
             from customtkinter.windows.widgets.theme import ThemeManager
@@ -1621,7 +1728,6 @@ class CorpusBuilderUI:
 
         ai_opts = {
             "smart_grain":      self._ai_smart_grain.get(),
-            "detect_versions":  self._ai_detect_versions.get(),
             "extract_features": self._ai_extract_feats.get(),
             "cluster":          self._ai_cluster.get(),
             "clap":             self._ai_clap.get(),
@@ -1645,6 +1751,8 @@ class CorpusBuilderUI:
                     do_download=self._do_download.get(), do_slice=self._do_slice.get(),
                     randomize_cut=self._randomize_cut_enabled.get(),
                     dur_min=dur_min, dur_max=dur_max,
+                    match_versions=self._ai_detect_versions.get(),
+                    from_middle=self._from_middle.get(),
                     ai_opts=ai_opts, stop_event=self._stop_event)
             except Exception as e:
                 print(f"ERROR: {e}")
@@ -1719,11 +1827,15 @@ def main():
                         help="Random grain length between MIN and MAX seconds, at a random position")
     parser.add_argument("--seed",           type=int,
                         help="Random seed, so a random sample or random cuts can be reproduced")
+    parser.add_argument("--download-from",  choices=["start", "middle"], default="start",
+                        help="Download from the start of each song, or from about a third of the way in")
+    parser.add_argument("--first-result",   action="store_true",
+                        help="Use the first YouTube result instead of picking the best match")
     parser.add_argument("--skip-download",  action="store_true")
     parser.add_argument("--skip-slice",     action="store_true")
     ai = parser.add_argument_group("AI analysis (requires librosa)")
     ai.add_argument("--smart-grain",     action="store_true")
-    ai.add_argument("--detect-versions", action="store_true")
+    ai.add_argument("--grain-strategy",  choices=GRAIN_STRATEGIES, default="auto")
     ai.add_argument("--features",        action="store_true")
     ai.add_argument("--cluster",         action="store_true")
     ai.add_argument("--clap",            action="store_true")
@@ -1750,7 +1862,8 @@ def main():
             do_download=not args.skip_download, do_slice=not args.skip_slice,
             randomize_cut=bool(args.randomize_cut), dur_min=dur_min, dur_max=dur_max,
             fade_ms=args.fade_ms, seed=args.seed,
-            ai_opts={"smart_grain": args.smart_grain, "detect_versions": args.detect_versions,
+            match_versions=not args.first_result, from_middle=args.download_from == "middle",
+            ai_opts={"smart_grain": args.smart_grain, "grain_strategy": args.grain_strategy,
                      "extract_features": args.features, "cluster": args.cluster,
                      "clap": args.clap})
     except RuntimeError as e:
