@@ -29,12 +29,12 @@ import csv
 import json
 import os
 import queue
+import random
 import re
 import shutil
 import subprocess
 import sys
 import threading
-import time
 
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -52,12 +52,29 @@ _strategy_wins = {"energy": 0, "onsets": 0, "spectral": 0}
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
-_TRACK_COLS  = ["Track Name", "track_name", "Song Name", "song_name", "Title", "title"]
-_ARTIST_COLS = ["Artist Name(s)", "Artist Name", "artist_name", "artists", "Artist", "artist"]
+# In a PyInstaller build, bundled data lives in a temp folder that is deleted on
+# exit, so config and output must go next to the executable instead.
+if getattr(sys, "frozen", False):
+    APP_DIR  = os.path.dirname(os.path.abspath(sys.executable))
+    DATA_DIR = getattr(sys, "_MEIPASS", APP_DIR)
+else:
+    APP_DIR = DATA_DIR = SCRIPT_DIR
+
+_TRACK_COLS    = ["Track Name", "track_name", "Song Name", "song_name", "Title", "title"]
+_ARTIST_COLS   = ["Artist Name(s)", "Artist Name", "artist_name", "artists", "Artist", "artist"]
+_URI_COLS      = ["Track URI", "track_uri", "uri", "spotify_uri"]
+_DURATION_COLS = ["Duration (ms)", "duration_ms", "Track Duration (ms)"]
+
+AUDIO_EXTS = (".wav",)
 
 
 def sanitize(name: str) -> str:
     return re.sub(r'[/\\:*?"<>|]', "_", name).strip()[:150]
+
+
+def track_filename(track: dict) -> str:
+    """File stem used for a track's preview, grain and metadata entry."""
+    return sanitize(f"{track['artist']} - {track['name']}")
 
 
 def ffmpeg_bin() -> str:
@@ -70,129 +87,188 @@ def ffmpeg_bin() -> str:
     ]:
         if os.path.isfile(candidate):
             return candidate
-    print("ffmpeg is not installed or not found on your system.")
-    print("  Windows: open PowerShell and run   winget install ffmpeg")
-    print("  Mac:     open Terminal and run      brew install ffmpeg")
-    print("Then restart the app.")
-    sys.exit(1)
+    raise RuntimeError(
+        "ffmpeg is not installed or not found on your system.\n"
+        "  Windows: open PowerShell and run   winget install ffmpeg\n"
+        "  Mac:     open Terminal and run      brew install ffmpeg\n"
+        "Then restart the app.")
+
+
+def audio_duration(path: str):
+    """Length of an audio file in seconds, or None if it can't be read."""
+    try:
+        import soundfile as sf
+        return float(sf.info(path).duration)
+    except Exception:
+        pass
+    try:
+        import wave
+        with wave.open(path) as w:
+            return w.getnframes() / float(w.getframerate())
+    except Exception:
+        return None
 
 
 def _find_col(row: dict, candidates: list) -> str:
     for col in candidates:
-        if col in row:
+        if col in row and row[col] is not None:
             return row[col]
     return ""
 
 
+def read_tracks(csv_path: str) -> list:
+    """Parse a playlist CSV into track dicts. Rows without a name or artist are skipped."""
+    tracks = []
+    with open(csv_path, newline="", encoding="utf-8-sig") as f:
+        for row in csv.DictReader(f):
+            name   = _find_col(row, _TRACK_COLS).strip()
+            artist = _find_col(row, _ARTIST_COLS).strip()
+            if not (name and artist):
+                continue
+            track = {"artist": artist, "name": name}
+            uri = _find_col(row, _URI_COLS).strip()
+            if uri:
+                track["uri"] = uri
+            try:
+                track["duration_ms"] = int(float(_find_col(row, _DURATION_COLS)))
+            except ValueError:
+                pass
+            tracks.append(track)
+    return tracks
+
+
+def _list_audio(folder: str) -> list:
+    return sorted(f for f in os.listdir(folder) if f.lower().endswith(AUDIO_EXTS))
+
+
+def _stem(fname: str) -> str:
+    return os.path.splitext(fname)[0]
+
+
 # ── Step 1: Download ──────────────────────────────────────────────────────────
 
-def download_track(artist: str, name: str, wav_path: str, preview_length: int) -> bool:
+class _QuietLogger:
+    """Stops yt-dlp printing its own copy of errors; download_track reports them instead."""
+    def debug(self, msg): pass
+    def info(self, msg): pass
+    def warning(self, msg): pass
+    def error(self, msg): pass
+
+
+def _short_error(e: Exception) -> str:
+    lines = str(e).strip().splitlines()
+    msg = re.sub(r"^ERROR:\s*", "", lines[0]) if lines else type(e).__name__
+    msg = re.split(r" \(caused by |; please report this issue", msg)[0]
+    return msg if len(msg) <= 160 else msg[:157] + "..."
+
+
+def download_track(artist: str, name: str, wav_path: str, preview_length: int) -> tuple:
+    """Returns (ok, error_message)."""
     primary_artist = artist.split(";")[0].strip()
     query = f"{primary_artist} - {name}"
-    tmp_base = wav_path.replace(".wav", "_tmp")
+    tmp_base = wav_path[:-4] + "_tmp"
 
     ydl_opts = {
         "format": "bestaudio/best",
         "outtmpl": tmp_base + ".%(ext)s",
         "quiet": True,
         "no_warnings": True,
+        "noprogress": True,
+        "logger": _QuietLogger(),
         "download_ranges": yt_dlp.utils.download_range_func([], [[0, preview_length]]),
         "force_keyframes_at_cuts": True,
         "postprocessors": [{"key": "FFmpegExtractAudio", "preferredcodec": "wav"}],
         "postprocessor_args": {"ffmpegextractaudio": ["-ar", "44100", "-ac", "2"]},
     }
 
+    err = "no audio was produced"
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             ydl.download([f"ytsearch1:{query}"])
         tmp_wav = tmp_base + ".wav"
         if os.path.exists(tmp_wav):
             shutil.move(tmp_wav, wav_path)
-            return True
-    except Exception:
-        pass
+            return True, ""
+    except Exception as e:
+        err = _short_error(e)
 
-    for ext in [".wav", ".webm", ".m4a", ".mp3", ".opus"]:
+    for ext in [".wav", ".webm", ".m4a", ".mp3", ".opus", ".part"]:
         f = tmp_base + ext
         if os.path.exists(f):
             try:
                 os.remove(f)
             except OSError:
                 pass
-    return False
+    return False, err
 
 
-def run_download(csv_path: str, previews_dir: str, preview_length: int,
-                 stop_event: threading.Event = None, ai_opts: dict = None,
-                 metadata: dict = None, tracks: list = None):
+def run_download(tracks: list, previews_dir: str, preview_length: int,
+                 stop_event: threading.Event = None):
     os.makedirs(previews_dir, exist_ok=True)
-    if tracks is None:
-        tracks = []
-        with open(csv_path, newline="", encoding="utf-8-sig") as f:
-            for row in csv.DictReader(f):
-                name   = _find_col(row, _TRACK_COLS).strip()
-                artist = _find_col(row, _ARTIST_COLS).strip()
-                if name and artist:
-                    tracks.append({"name": name, "artist": artist})
+    stop_event = stop_event or threading.Event()
 
     print(f"\n=== DOWNLOAD ({len(tracks)} tracks -> {preview_length}s previews) ===")
     print(f"Output: {previews_dir}\n")
     downloaded = skipped = failed = 0
-
-    ai_opts = ai_opts or {}
-    if metadata is None:
-        metadata = {}
-
-    ai_active = any(ai_opts.get(k) for k in ["smart_grain", "detect_versions", "extract_features"])
-    librosa_ok = _check_librosa() if ai_active else False
+    fails_in_a_row = 0
+    hinted = False
 
     for i, track in enumerate(tracks, 1):
-        if stop_event and stop_event.is_set():
+        if stop_event.is_set():
             print("\nStopped by user.")
             break
-        filename = sanitize(f"{track['artist']} - {track['name']}")
+        filename = track_filename(track)
         wav_path = os.path.join(previews_dir, filename + ".wav")
         if os.path.exists(wav_path):
             print(f"  [{i}/{len(tracks)}] [exists]  {filename}.wav")
             skipped += 1
-            if librosa_ok and filename not in metadata:
-                _run_ai_on_track(wav_path, filename, ai_opts, metadata)
             continue
         print(f"  [{i}/{len(tracks)}] [fetch]   {track['artist']} - {track['name']}")
-        if download_track(track["artist"], track["name"], wav_path, preview_length):
+        ok, err = download_track(track["artist"], track["name"], wav_path, preview_length)
+        if ok:
             print(f"  [{i}/{len(tracks)}] [done]    {filename}.wav")
             downloaded += 1
-            if librosa_ok:
-                _run_ai_on_track(wav_path, filename, ai_opts, metadata)
+            fails_in_a_row = 0
         else:
-            print(f"  [{i}/{len(tracks)}] [failed]  {track['artist']} - {track['name']}")
+            print(f"  [{i}/{len(tracks)}] [failed]  {track['artist']} - {track['name']}  ({err})")
             failed += 1
-        time.sleep(1)
+            fails_in_a_row += 1
+            if fails_in_a_row >= 5 and not hinted:
+                print("  Several downloads in a row have failed. YouTube may have changed something;\n"
+                      "  try updating yt-dlp:   python -m pip install -U yt-dlp")
+                hinted = True
+        stop_event.wait(1)  # be polite to YouTube, but stay responsive to Stop
 
     print(f"\nDownload complete - downloaded: {downloaded}  skipped: {skipped}  failed: {failed}")
 
 
 # ── Step 2: Slice ─────────────────────────────────────────────────────────────
 
-def slice_preview(src: str, dst: str, offset: float, duration: float, ffmpeg: str) -> bool:
-    cmd = [ffmpeg, "-y", "-ss", str(offset), "-t", str(duration),
-           "-i", src, "-ar", "44100", "-ac", "2", dst]
-    return subprocess.run(cmd, capture_output=True).returncode == 0
+def slice_preview(src: str, dst: str, offset: float, duration: float, ffmpeg: str,
+                  fade_ms: float = 5.0) -> bool:
+    cmd = [ffmpeg, "-y", "-ss", f"{offset:.3f}", "-t", f"{duration:.3f}", "-i", src]
+    fade = min(fade_ms / 1000.0, duration / 4)
+    if fade > 0:
+        cmd += ["-af", f"afade=t=in:st=0:d={fade:.4f},"
+                       f"afade=t=out:st={duration - fade:.4f}:d={fade:.4f}"]
+    cmd += ["-ar", "44100", "-ac", "2", dst]
+    ok = subprocess.run(cmd, capture_output=True).returncode == 0
+    # A WAV header alone is 44 bytes; anything that small means no audio was cut.
+    if ok and os.path.getsize(dst) <= 44:
+        os.remove(dst)
+        ok = False
+    return ok
 
 
-def run_slice(previews_dir: str, grains_dir: str, offset: float, duration: float,
-              stop_event: threading.Event = None, ai_opts: dict = None,
-              metadata: dict = None, randomize_cut: bool = False,
-              dur_min: float = 0.5, dur_max: float = 3.0, preview_length: int = 30):
-    import random as _r
+def run_slice(previews_dir: str, grains_dir: str, files: list, offset: float, duration: float,
+              stop_event: threading.Event = None, metadata: dict = None,
+              use_smart: bool = False, randomize_cut: bool = False,
+              dur_min: float = 0.5, dur_max: float = 3.0, fade_ms: float = 5.0):
     os.makedirs(grains_dir, exist_ok=True)
     ffmpeg = ffmpeg_bin()
-    wav_files = sorted(f for f in os.listdir(previews_dir) if f.lower().endswith(".wav"))
-    total = len(wav_files)
-
-    ai_opts = ai_opts or {}
-    metadata = metadata or {}
-    use_smart = ai_opts.get("smart_grain") and metadata
+    stop_event = stop_event or threading.Event()
+    metadata = metadata if metadata is not None else {}
+    total = len(files)
 
     if randomize_cut:
         print(f"\n=== SLICE ({total} files -> random cut, duration {dur_min}–{dur_max}s) ===")
@@ -203,34 +279,41 @@ def run_slice(previews_dir: str, grains_dir: str, offset: float, duration: float
     print(f"Output: {grains_dir}\n")
     done = skipped = failed = 0
 
-    for i, fname in enumerate(wav_files, 1):
-        if stop_event and stop_event.is_set():
+    for i, fname in enumerate(files, 1):
+        if stop_event.is_set():
             print("\nStopped by user.")
             break
         src = os.path.join(previews_dir, fname)
-        dst = os.path.join(grains_dir, fname)
+        dst = os.path.join(grains_dir, _stem(fname) + ".wav")
         if os.path.exists(dst):
             print(f"  [{i}/{total}] [exists]  {fname}")
             skipped += 1
             continue
 
-        track_key = fname[:-4] if fname.lower().endswith(".wav") else fname
+        key = _stem(fname)
+        length = audio_duration(src)
 
         if randomize_cut:
-            effective_duration = round(_r.uniform(dur_min, dur_max), 2)
-            max_offset = max(0.0, preview_length - effective_duration - 1.0)
-            effective_offset = round(_r.uniform(0.0, max_offset), 2)
-            print(f"  [{i}/{total}] [cut]     offset={effective_offset}s dur={effective_duration}s  {fname}")
+            cut_dur = random.uniform(dur_min, dur_max)
+            if length is not None:
+                cut_dur = min(cut_dur, length)
+            cut_off = random.uniform(0.0, max(0.0, (length or cut_dur) - cut_dur))
         else:
-            effective_offset = offset
-            effective_duration = duration
-            if use_smart and track_key in metadata:
-                suggested = metadata[track_key].get("suggested_offset")
+            cut_off, cut_dur = offset, duration
+            if use_smart:
+                suggested = metadata.get(key, {}).get("suggested_offset")
                 if suggested is not None:
-                    effective_offset = suggested
+                    cut_off = suggested
 
-        if slice_preview(src, dst, effective_offset, effective_duration, ffmpeg):
-            print(f"  [{i}/{total}] [sliced]  {fname}")
+        if length is not None and cut_off + cut_dur > length:
+            cut_dur = min(cut_dur, length)
+            cut_off = max(0.0, length - cut_dur)
+            print(f"  [{i}/{total}] [note]    file is only {length:.1f}s — cut moved to {cut_off:.2f}s")
+
+        if slice_preview(src, dst, cut_off, cut_dur, ffmpeg, fade_ms):
+            print(f"  [{i}/{total}] [sliced]  {fname}  @ {cut_off:.2f}s, {cut_dur:.2f}s")
+            metadata.setdefault(key, {})["grain"] = {
+                "offset": round(cut_off, 3), "duration": round(cut_dur, 3)}
             done += 1
         else:
             print(f"  [{i}/{total}] [failed]  {fname}")
@@ -241,15 +324,6 @@ def run_slice(previews_dir: str, grains_dir: str, offset: float, duration: float
 
 # ── AI Analysis ───────────────────────────────────────────────────────────────
 
-def _check_librosa() -> bool:
-    try:
-        import librosa  # noqa: F401
-        return True
-    except ImportError:
-        print("  [AI] librosa is not installed. Run setup.bat or setup.sh to enable AI analysis.")
-        return False
-
-
 def _librosa_available() -> bool:
     try:
         import librosa  # noqa: F401
@@ -258,23 +332,65 @@ def _librosa_available() -> bool:
         return False
 
 
-def _run_ai_on_track(wav_path: str, filename: str, ai_opts: dict, metadata: dict):
-    entry = metadata.setdefault(filename, {})
-    if ai_opts.get("extract_features"):
+def _needs_analysis(entry: dict, ai_opts: dict) -> bool:
+    return bool(
+        (ai_opts.get("extract_features") and "features" not in entry)
+        or (ai_opts.get("smart_grain")
+            and entry.get("suggested_offset_for") != ai_opts.get("duration"))
+        or (ai_opts.get("detect_versions") and "version_flag" not in entry))
+
+
+def _run_ai_on_track(wav_path: str, key: str, ai_opts: dict, metadata: dict):
+    """Fill in whichever requested analysis results this track's entry is missing."""
+    entry = metadata.setdefault(key, {})
+    if ai_opts.get("extract_features") and "features" not in entry:
         feats = analyze_audio(wav_path)
         if feats:
             entry["features"] = feats
-            print(f"  [AI] {filename[:50]}: tempo={feats.get('tempo', 0):.0f} key={feats.get('estimated_key', '?')}")
-    if ai_opts.get("smart_grain"):
-        duration = ai_opts.get("duration", 1.5)
-        offset = find_best_grain(wav_path, duration)
-        entry["suggested_offset"] = offset
-    if ai_opts.get("detect_versions"):
+            print(f"  [AI] {key[:50]}: tempo={feats.get('tempo', 0):.0f} key={feats.get('estimated_key', '?')}")
+    duration = ai_opts.get("duration", 1.5)
+    if ai_opts.get("smart_grain") and entry.get("suggested_offset_for") != duration:
+        entry["suggested_offset"] = find_best_grain(wav_path, duration)
+        entry["suggested_offset_for"] = duration
+    if ai_opts.get("detect_versions") and "version_flag" not in entry:
         result = detect_wrong_version(wav_path)
         entry["version_flag"] = result.get("flag", "ok")
         entry["version_confidence"] = result.get("confidence", 0.0)
         if result.get("flag", "ok") != "ok":
-            print(f"  [AI] {filename[:50]}: [{result['flag']}] conf={result['confidence']:.2f}")
+            print(f"  [AI] {key[:50]}: [{result['flag']}] conf={result['confidence']:.2f}")
+
+
+def run_analysis(previews_dir: str, files: list, ai_opts: dict, metadata: dict,
+                 stop_event: threading.Event = None):
+    """Analyse every file whose metadata is missing a requested result.
+
+    Runs as its own pass so it works the same whether the audio was just
+    downloaded, downloaded in an earlier session, or came from an audio folder.
+    """
+    if not any(ai_opts.get(k) for k in ("smart_grain", "detect_versions", "extract_features")):
+        return
+    if not _librosa_available():
+        print("  [AI] librosa is not installed. Run setup.bat or setup.sh to enable AI analysis.")
+        return
+    stop_event = stop_event or threading.Event()
+    todo = [f for f in files if _needs_analysis(metadata.get(_stem(f), {}), ai_opts)]
+    print(f"\n=== ANALYSE ({len(todo)} of {len(files)} files need analysis) ===")
+    if todo:
+        print("  (The first file can take 30–60s while librosa warms up.)")
+    for i, fname in enumerate(todo, 1):
+        if stop_event.is_set():
+            print("\nStopped by user.")
+            break
+        print(f"  [{i}/{len(todo)}] {fname}")
+        _run_ai_on_track(os.path.join(previews_dir, fname), _stem(fname), ai_opts, metadata)
+
+
+def _tempo(y, sr) -> float:
+    """Newer librosa returns tempo as a 1-element array; older returns a scalar."""
+    import librosa
+    import numpy as np
+    tempo, _ = librosa.beat.beat_track(y=y, sr=sr)
+    return float(np.atleast_1d(tempo)[0])
 
 
 def analyze_audio(wav_path: str) -> dict:
@@ -282,7 +398,7 @@ def analyze_audio(wav_path: str) -> dict:
         import librosa
         import numpy as np
         y, sr = librosa.load(wav_path, sr=None, mono=True)
-        tempo, _ = librosa.beat.beat_track(y=y, sr=sr)
+        tempo = _tempo(y, sr)
         rms = float(np.mean(librosa.feature.rms(y=y)))
         sc = float(np.mean(librosa.feature.spectral_centroid(y=y, sr=sr)))
         zcr = float(np.mean(librosa.feature.zero_crossing_rate(y)))
@@ -394,7 +510,7 @@ def detect_wrong_version(wav_path: str) -> dict:
         if mean_flatness > 0.1:
             cover_score += 0.4
         try:
-            tempo, _ = librosa.beat.beat_track(y=y, sr=sr)
+            tempo = _tempo(y, sr)
             if float(tempo) < 40 or float(tempo) > 200:
                 cover_score += 0.3
         except Exception:
@@ -435,7 +551,7 @@ def cluster_corpus(grains_dir: str, n_clusters: int = 5) -> dict:
                 rms = float(np.mean(librosa.feature.rms(y=y)))
                 sc = float(np.mean(librosa.feature.spectral_centroid(y=y, sr=sr)))
                 zcr = float(np.mean(librosa.feature.zero_crossing_rate(y)))
-                tempo, _ = librosa.beat.beat_track(y=y, sr=sr)
+                tempo = _tempo(y, sr)
                 features.append([rms, sc, zcr, float(tempo)])
                 valid_files.append(fname)
             except Exception:
@@ -488,6 +604,92 @@ def run_clap_analysis(grains_dir: str, output_dir: str) -> None:
         print(f"  [CLAP] coords.json saved to {out_path}")
     except Exception as e:
         print(f"  [CLAP] Error: {e}")
+
+
+def load_metadata(output_dir: str) -> dict:
+    try:
+        with open(os.path.join(output_dir, "metadata.json"), encoding="utf-8") as f:
+            data = json.load(f)
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
+def run_pipeline(output_root: str, tracks: list = None, audio_folder: str = "",
+                 preview_length: int = 30, offset: float = 5.0, duration: float = 1.5,
+                 do_download: bool = True, do_slice: bool = True,
+                 randomize_cut: bool = False, dur_min: float = 0.5, dur_max: float = 3.0,
+                 fade_ms: float = 5.0, seed=None, ai_opts: dict = None,
+                 stop_event: threading.Event = None):
+    """Download -> analyse -> slice -> cluster. Shared by the GUI and the CLI.
+
+    With an audio_folder, every audio file in it is used and nothing is downloaded.
+    Otherwise only the given tracks are downloaded, analysed and sliced.
+    """
+    stop_event = stop_event or threading.Event()
+    ai_opts = dict(ai_opts or {})
+    ai_opts["duration"] = duration
+    tracks = tracks or []
+    grains_dir = os.path.join(output_root, "grains")
+
+    if seed is not None:
+        random.seed(seed)
+        print(f"Random seed: {seed}")
+    if randomize_cut and ai_opts.get("smart_grain"):
+        print("Randomize cut is on, so smart grain selection is skipped for this run.")
+        ai_opts["smart_grain"] = False
+
+    metadata = load_metadata(output_root)
+    _strategy_wins.update({"energy": 0, "onsets": 0, "spectral": 0})
+
+    if audio_folder:
+        previews_dir = audio_folder
+        print(f"Audio folder set — skipping download, using files in: {audio_folder}")
+        files = _list_audio(audio_folder) if os.path.isdir(audio_folder) else []
+    else:
+        previews_dir = os.path.join(output_root, "previews")
+        if do_download:
+            run_download(tracks, previews_dir, preview_length, stop_event)
+        files, seen = [], set()
+        for t in tracks:
+            key = track_filename(t)
+            if key in seen or not os.path.exists(os.path.join(previews_dir, key + ".wav")):
+                continue
+            seen.add(key)
+            files.append(key + ".wav")
+            entry = metadata.setdefault(key, {})
+            entry.update({k: t[k] for k in ("artist", "name", "uri", "duration_ms") if k in t})
+
+    if not files:
+        print("No audio files to process." +
+              ("" if audio_folder or do_download else "  Enable Download, or set an audio folder."))
+        return
+
+    if not stop_event.is_set():
+        run_analysis(previews_dir, files, ai_opts, metadata, stop_event)
+
+    if do_slice and not stop_event.is_set():
+        run_slice(previews_dir, grains_dir, files, offset, duration, stop_event,
+                  metadata=metadata, use_smart=bool(ai_opts.get("smart_grain")),
+                  randomize_cut=randomize_cut, dur_min=dur_min, dur_max=dur_max,
+                  fade_ms=fade_ms)
+
+    if not stop_event.is_set() and ai_opts.get("cluster") and os.path.isdir(grains_dir):
+        clusters = cluster_corpus(grains_dir)
+        for fname, cluster_id in clusters.items():
+            metadata.setdefault(_stem(fname), {})["cluster"] = cluster_id
+
+    if not stop_event.is_set() and ai_opts.get("clap") and os.path.isdir(grains_dir):
+        run_clap_analysis(grains_dir, output_root)
+
+    if metadata:
+        save_metadata(output_root, metadata)
+
+    if any(_strategy_wins.values()):
+        preferred = max(_strategy_wins, key=_strategy_wins.get)
+        save_config({"preferred_grain_strategy": preferred})
+
+    print(f"\nAll done.  Previews: {previews_dir}  |  Grains: {grains_dir}")
 
 
 def save_metadata(output_dir: str, metadata: dict) -> None:
@@ -688,7 +890,7 @@ TRANSLATIONS = {
 
 
 def _load_translations():
-    path = os.path.join(SCRIPT_DIR, "translations.json")
+    path = os.path.join(DATA_DIR, "translations.json")
     if not os.path.isfile(path):
         return
     try:
@@ -708,7 +910,7 @@ _load_translations()
 # ── Theme system ──────────────────────────────────────────────────────────────
 
 def load_config() -> dict:
-    path = os.path.join(SCRIPT_DIR, "config.json")
+    path = os.path.join(APP_DIR, "config.json")
     try:
         with open(path, encoding="utf-8") as f:
             return json.load(f)
@@ -717,7 +919,7 @@ def load_config() -> dict:
 
 
 def save_config(updates: dict):
-    path = os.path.join(SCRIPT_DIR, "config.json")
+    path = os.path.join(APP_DIR, "config.json")
     config = load_config()
     config.update(updates)
     try:
@@ -762,13 +964,7 @@ class _PrintRedirector:
 
 def load_tracks_from_csv(path: str):
     try:
-        tracks = []
-        with open(path, newline="", encoding="utf-8-sig") as f:
-            for row in csv.DictReader(f):
-                name   = _find_col(row, _TRACK_COLS).strip()
-                artist = _find_col(row, _ARTIST_COLS).strip()
-                if name and artist:
-                    tracks.append({"artist": artist, "name": name})
+        tracks = read_tracks(path)
         if not tracks:
             return [], "No tracks found — check Track Name and Artist Name(s) columns."
         return tracks, ""
@@ -788,6 +984,7 @@ class CorpusBuilderUI:
         self._ttk  = ttk
 
         self._all_tracks = []
+        self._visible_idx = []   # indices into _all_tracks currently shown in the tree
         self._log_queue  = queue.Queue()
         self._stop_event = threading.Event()
         self._running    = False
@@ -903,7 +1100,7 @@ class CorpusBuilderUI:
                                       font=ctk.CTkFont(size=14), anchor="w")
         self._save_lbl.grid(row=2, column=0, padx=(16, 12), pady=(4, 16), sticky="w")
 
-        self._out_var = _tk.StringVar(value=os.path.join(SCRIPT_DIR, "output"))
+        self._out_var = _tk.StringVar(value=os.path.join(APP_DIR, "output"))
         ctk.CTkEntry(files_frame, textvariable=self._out_var,
                      height=36, font=ctk.CTkFont(size=13)
                      ).grid(row=2, column=1, padx=4, pady=(4, 16), sticky="ew")
@@ -920,6 +1117,7 @@ class CorpusBuilderUI:
         self._audio_lbl.grid(row=3, column=0, padx=(16, 12), pady=(4, 16), sticky="w")
 
         self._audio_folder_var = _tk.StringVar()
+        self._audio_folder_var.trace_add("write", lambda *_: self._update_start_state())
         ctk.CTkEntry(files_frame, textvariable=self._audio_folder_var,
                      height=36, font=ctk.CTkFont(size=13)
                      ).grid(row=3, column=1, padx=4, pady=(4, 16), sticky="ew")
@@ -1119,13 +1317,8 @@ class CorpusBuilderUI:
         self._youtube_note_lbl.pack(fill="x", padx=16, pady=(8, 16))
 
         # ── AI ANALYSIS label — row 7 ─────────────────────────────────────
-        ai_label_text = (
-            T["ai_section"] + "  ✓ librosa ready"
-            if self._librosa_ok else
-            T["ai_section"] + "  ✗ librosa not installed — features disabled"
-        )
         self._ai_label = ctk.CTkLabel(
-            self._scroll, text=ai_label_text,
+            self._scroll, text=self._ai_label_text(),
             font=ctk.CTkFont(size=13, weight="bold"),
             text_color=("gray40", "gray55"),
         )
@@ -1263,6 +1456,12 @@ class CorpusBuilderUI:
             background=[("selected", sel)],
             foreground=[("selected", "#ffffff")])
 
+    def _ai_label_text(self) -> str:
+        section = self._T().get("ai_section", "AI ANALYSIS")
+        if self._librosa_ok:
+            return section + "  ✓ librosa ready"
+        return section + "  ✗ librosa not installed — features disabled"
+
     # ── Theme / language ──────────────────────────────────────────────────────
 
     def _on_lang_change(self, lang: str):
@@ -1274,7 +1473,7 @@ class CorpusBuilderUI:
         self._files_label.configure(text=T["files_section"])
         self._tracks_label.configure(text=T["tracks_section"])
         self._settings_label.configure(text=T["settings_section"])
-        self._ai_label.configure(text=T.get("ai_section", "AI ANALYSIS"))
+        self._ai_label.configure(text=self._ai_label_text())
         self._log_label.configure(text=T["log_section"])
         self._lang_label.configure(text=T["language_label"])
         self._csv_lbl.configure(text=T["csv_label"])
@@ -1341,34 +1540,52 @@ class CorpusBuilderUI:
             self._log_write(msg)
             self._all_tracks = []
             self._refresh_tree([])
-            self._start_btn.configure(state="disabled")
+            self._update_start_state()
             return
         self._all_tracks = tracks
         self._search_var.set("")
-        self._refresh_tree(tracks)
+        self._refresh_tree(range(len(tracks)))
         self._count_label.configure(text=T["status_loaded"].format(n=len(tracks)))
-        self._start_btn.configure(state="normal")
+        self._update_start_state()
+
+    def _update_start_state(self):
+        if self._running:
+            return
+        ready = bool(self._all_tracks) or bool(self._audio_folder_var.get().strip())
+        self._start_btn.configure(state="normal" if ready else "disabled")
 
     def _on_search(self, *_):
         T = self._T()
         q = self._search_var.get().lower()
         if not q:
-            self._refresh_tree(self._all_tracks)
+            self._refresh_tree(range(len(self._all_tracks)))
             self._count_label.configure(
                 text=T["status_loaded"].format(n=len(self._all_tracks)))
             return
-        filtered = [
-            t for t in self._all_tracks
+        matches = [
+            i for i, t in enumerate(self._all_tracks)
             if q in t["artist"].lower() or q in t["name"].lower()
         ]
-        self._refresh_tree(filtered)
+        self._refresh_tree(matches)
         self._count_label.configure(
-            text=T["status_filtered"].format(n=len(filtered), m=len(self._all_tracks)))
+            text=T["status_filtered"].format(n=len(matches), m=len(self._all_tracks)))
 
-    def _refresh_tree(self, tracks: list):
+    def _refresh_tree(self, indices):
+        self._visible_idx = list(indices)
         self._tree.delete(*self._tree.get_children())
-        for t in tracks:
-            self._tree.insert("", "end", values=(t["artist"], t["name"]))
+        for i in self._visible_idx:
+            t = self._all_tracks[i]
+            self._tree.insert("", "end", iid=str(i), values=(t["artist"], t["name"]))
+
+    def _tracks_to_process(self) -> list:
+        """Selected rows if any, otherwise every row the search filter shows."""
+        selected = self._tree.selection()
+        if selected:
+            self._log_write(f"Using {len(selected)} selected tracks.")
+            return [self._all_tracks[int(iid)] for iid in selected]
+        if len(self._visible_idx) < len(self._all_tracks):
+            self._log_write(f"Using the {len(self._visible_idx)} tracks matching the search.")
+        return [self._all_tracks[i] for i in self._visible_idx]
 
     # ── Run ───────────────────────────────────────────────────────────────────
 
@@ -1386,11 +1603,8 @@ class CorpusBuilderUI:
         self._log_write("--- Stop requested ---")
 
     def _run_thread(self):
-        csv_path     = self._csv_var.get()
         output_root  = self._out_var.get()
         audio_folder = self._audio_folder_var.get().strip()
-        previews_dir = audio_folder if audio_folder else os.path.join(output_root, "previews")
-        grains_dir   = os.path.join(output_root, "grains")
 
         try:
             prev_len = int(self._prev_len_var.get())
@@ -1411,59 +1625,27 @@ class CorpusBuilderUI:
             "extract_features": self._ai_extract_feats.get(),
             "cluster":          self._ai_cluster.get(),
             "clap":             self._ai_clap.get(),
-            "duration":         duration,
         }
 
-        metadata = {}
-        _strategy_wins.update({"energy": 0, "onsets": 0, "spectral": 0})
-
-        tracks_override = None
-        if self._random_sample_enabled.get():
-            import random as _r
+        tracks = [] if audio_folder else self._tracks_to_process()
+        if tracks and self._random_sample_enabled.get():
             try:
                 n = max(1, int(self._sample_count_var.get()))
-                pool = list(self._all_tracks)
-                tracks_override = _r.sample(pool, min(n, len(pool)))
+                pool = len(tracks)
+                tracks = random.sample(tracks, min(n, pool))
+                self._log_write(f"Random sample: {len(tracks)} of {pool} tracks selected.")
             except ValueError:
                 self._log_write("Invalid sample count — using all tracks.")
 
         with _PrintRedirector(self._log_queue):
             try:
-                if tracks_override is not None:
-                    print(f"Random sample: {len(tracks_override)} of {len(self._all_tracks)} tracks selected.")
-                if audio_folder:
-                    print(f"Audio folder set — skipping download, slicing from: {audio_folder}")
-                if self._do_download.get() and not audio_folder:
-                    run_download(csv_path, previews_dir, prev_len, self._stop_event,
-                                 ai_opts=ai_opts, metadata=metadata, tracks=tracks_override)
-                if self._do_slice.get() and not self._stop_event.is_set():
-                    if os.path.isdir(previews_dir):
-                        run_slice(previews_dir, grains_dir, offset, duration,
-                                  self._stop_event, ai_opts=ai_opts, metadata=metadata,
-                                  randomize_cut=self._randomize_cut_enabled.get(),
-                                  dur_min=dur_min, dur_max=dur_max, preview_length=prev_len)
-                    else:
-                        print("No previews folder found — run with Download enabled first.")
-
-                if not self._stop_event.is_set() and ai_opts.get("cluster"):
-                    if os.path.isdir(grains_dir):
-                        clusters = cluster_corpus(grains_dir)
-                        for fname, cluster_id in clusters.items():
-                            key = fname[:-4] if fname.lower().endswith(".wav") else fname
-                            metadata.setdefault(key, {})["cluster"] = cluster_id
-
-                if not self._stop_event.is_set() and ai_opts.get("clap"):
-                    if os.path.isdir(grains_dir):
-                        run_clap_analysis(grains_dir, output_root)
-
-                if metadata:
-                    save_metadata(output_root, metadata)
-
-                if any(_strategy_wins.values()):
-                    preferred = max(_strategy_wins, key=_strategy_wins.get)
-                    save_config({"preferred_grain_strategy": preferred})
-
-                print(f"\nAll done.  Previews: {previews_dir}  |  Grains: {grains_dir}")
+                run_pipeline(
+                    output_root, tracks=tracks, audio_folder=audio_folder,
+                    preview_length=prev_len, offset=offset, duration=duration,
+                    do_download=self._do_download.get(), do_slice=self._do_slice.get(),
+                    randomize_cut=self._randomize_cut_enabled.get(),
+                    dur_min=dur_min, dur_max=dur_max,
+                    ai_opts=ai_opts, stop_event=self._stop_event)
             except Exception as e:
                 print(f"ERROR: {e}")
 
@@ -1473,8 +1655,8 @@ class CorpusBuilderUI:
         self._running = False
         self._progress.stop()
         self._progress.set(0)
-        self._start_btn.configure(state="normal")
         self._stop_btn.configure(state="disabled")
+        self._update_start_state()
 
     def _randomize(self):
         import random as _r
@@ -1522,31 +1704,61 @@ def main():
 
     parser = argparse.ArgumentParser(
         description="Download Spotify preview clips and slice them into short grains.")
-    parser.add_argument("--csv",            default=os.path.join(SCRIPT_DIR, "Liked_Songs.csv"))
-    parser.add_argument("--output",         default=os.path.join(SCRIPT_DIR, "output"))
+    parser.add_argument("--csv",            default=os.path.join(APP_DIR, "Liked_Songs.csv"))
+    parser.add_argument("--output",         default=os.path.join(APP_DIR, "output"))
+    parser.add_argument("--audio-folder",   default="",
+                        help="Use existing audio files from this folder instead of downloading")
     parser.add_argument("--preview-length", type=int,   default=30)
     parser.add_argument("--offset",         type=float, default=5.0)
     parser.add_argument("--duration",       type=float, default=1.5)
+    parser.add_argument("--fade-ms",        type=float, default=5.0,
+                        help="Fade in/out on each grain in milliseconds (0 = off)")
+    parser.add_argument("--sample",         type=int,   default=0, metavar="N",
+                        help="Pick N tracks at random from the CSV")
+    parser.add_argument("--randomize-cut",  type=float, nargs=2, metavar=("MIN", "MAX"),
+                        help="Random grain length between MIN and MAX seconds, at a random position")
+    parser.add_argument("--seed",           type=int,
+                        help="Random seed, so a random sample or random cuts can be reproduced")
     parser.add_argument("--skip-download",  action="store_true")
     parser.add_argument("--skip-slice",     action="store_true")
+    ai = parser.add_argument_group("AI analysis (requires librosa)")
+    ai.add_argument("--smart-grain",     action="store_true")
+    ai.add_argument("--detect-versions", action="store_true")
+    ai.add_argument("--features",        action="store_true")
+    ai.add_argument("--cluster",         action="store_true")
+    ai.add_argument("--clap",            action="store_true")
     args = parser.parse_args()
 
-    previews_dir = os.path.join(args.output, "previews")
-    grains_dir   = os.path.join(args.output, "grains")
+    if args.seed is not None:
+        random.seed(args.seed)
 
-    if not args.skip_download:
+    tracks = []
+    if not args.audio_folder:
         if not os.path.exists(args.csv):
             print(f"ERROR: CSV not found at {args.csv}")
             sys.exit(1)
-        run_download(args.csv, previews_dir, args.preview_length)
+        tracks = read_tracks(args.csv)
+        if args.sample > 0:
+            tracks = random.sample(tracks, min(args.sample, len(tracks)))
+            print(f"Random sample: {len(tracks)} tracks selected.")
 
-    if not args.skip_slice:
-        if not os.path.isdir(previews_dir):
-            print(f"ERROR: previews folder not found at {previews_dir}")
-            sys.exit(1)
-        run_slice(previews_dir, grains_dir, args.offset, args.duration)
-
-    print(f"\nAll done.  Previews: {previews_dir}  |  Grains: {grains_dir}")
+    dur_min, dur_max = sorted(args.randomize_cut) if args.randomize_cut else (0.5, 3.0)
+    try:
+        run_pipeline(
+            args.output, tracks=tracks, audio_folder=args.audio_folder,
+            preview_length=args.preview_length, offset=args.offset, duration=args.duration,
+            do_download=not args.skip_download, do_slice=not args.skip_slice,
+            randomize_cut=bool(args.randomize_cut), dur_min=dur_min, dur_max=dur_max,
+            fade_ms=args.fade_ms, seed=args.seed,
+            ai_opts={"smart_grain": args.smart_grain, "detect_versions": args.detect_versions,
+                     "extract_features": args.features, "cluster": args.cluster,
+                     "clap": args.clap})
+    except RuntimeError as e:
+        print(f"ERROR: {e}")
+        sys.exit(1)
+    except KeyboardInterrupt:
+        print("\nStopped.")
+        sys.exit(130)
 
 
 if __name__ == "__main__":

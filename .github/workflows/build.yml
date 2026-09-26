@@ -25,10 +25,17 @@ jobs:
           python-version: "3.11"
 
       - name: Install dependencies
-        run: pip install pyinstaller yt-dlp
+        run: pip install pyinstaller yt-dlp customtkinter
 
+      # customtkinter ships theme/font files that PyInstaller does not find on its own.
+      # ffmpeg is not bundled; the app tells the user how to install it if missing.
       - name: Build executable
-        run: pyinstaller --onefile --name spotify_corpus_builder spotify_corpus_builder.py
+        run: >
+          pyinstaller --onefile --name spotify_corpus_builder
+          --collect-data customtkinter
+          --add-data "translations.json:."
+          --add-data "themes:themes"
+          spotify_corpus_builder.py
 
       - name: Upload to release
         uses: softprops/action-gh-release@v2

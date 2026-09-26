@@ -64,6 +64,18 @@ python3 spotify_corpus_builder.py
 
 Or double-click the `.py` file on Windows.
 
+In the track list you can search, and select rows (Ctrl/Cmd-click, Shift-click). When you press Start, only the selected tracks are used; if nothing is selected, only the tracks matching the search.
+
+### Command line
+
+Everything the app does is also available from the command line:
+
+```
+python3 spotify_corpus_builder.py --csv my_songs.csv --sample 50 --seed 7 --randomize-cut 0.5 2.0
+python3 spotify_corpus_builder.py --audio-folder ~/my_wavs --smart-grain --features --cluster
+python3 spotify_corpus_builder.py --help
+```
+
 ### Getting your Spotify CSV
 
 1. Go to [exportify.net](https://exportify.net)
@@ -83,7 +95,9 @@ Or double-click the `.py` file on Windows.
 | Random sample | Pick N tracks at random from the CSV instead of all of them |
 | Randomize cut per track | Each track gets a random grain length and start point within a range you set |
 | Randomize button | Scrambles all numeric settings and AI checkboxes at once |
-| Audio folder | Point to a folder of existing WAVs — skips download and slices those files directly |
+| Audio folder | Point to a folder of existing WAVs — skips download and analyses/slices those files directly |
+
+Each grain gets a 5 ms fade in and out so it doesn't click (`--fade-ms` on the command line; 0 turns it off). If a cut would run past the end of a file, it is moved back so the grain is always full length.
 
 ---
 
@@ -99,6 +113,8 @@ Requires librosa (installed by setup script). The app shows a ✓ in the AI sect
 | Cluster by similarity | Groups grains into similarity buckets using K-means after slicing |
 | CLAP embeddings | Optional — requires laion-clap (~2GB). Produces `coords.json` for spatial corpus browsers |
 
+Analysis results are saved in `metadata.json` and reused on the next run, so only new files are analysed.
+
 > **Note:** The first time smart grain selection runs, numba compiles in the background (30–60s). The log goes quiet briefly — this is normal.
 
 ---
@@ -109,7 +125,7 @@ Requires librosa (installed by setup script). The app shows a ✓ in the AI sect
 output/
   previews/       ← downloaded WAVs, one per track
   grains/         ← sliced grains, ready for corpus use
-  metadata.json   ← AI analysis results (if enabled)
+  metadata.json   ← per track: Spotify URI, where the grain was cut, AI results
   coords.json     ← CLAP embeddings (if enabled)
 ```
 
