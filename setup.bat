@@ -55,6 +55,13 @@ echo     Source:  numpy.org
 echo     Used by: Numerical processing in audio analysis
 echo     Size:    ~20 MB
 echo.
+echo  7. tkinterdnd2
+echo     What:    Drag and drop support for Tkinter
+echo     By:      Open-source contributors
+echo     Source:  pypi.org/project/tkinterdnd2
+echo     Used by: Dropping a CSV or folder onto the window
+echo     Size:    ~1 MB
+echo.
 echo  These packages also install automatically
 echo  as sub-dependencies:
 echo.
@@ -111,12 +118,12 @@ python --version
 :: Install Python packages
 echo.
 echo Installing Python packages...
-python -m pip install --upgrade yt-dlp customtkinter librosa scikit-learn soundfile numpy
+python -m pip install --upgrade yt-dlp customtkinter librosa scikit-learn soundfile numpy tkinterdnd2
 if errorlevel 1 (
     echo.
     echo ERROR: Installation failed. Try running this script as Administrator,
     echo or open a terminal and run:
-    echo   python -m pip install yt-dlp customtkinter librosa scikit-learn soundfile numpy
+    echo   python -m pip install yt-dlp customtkinter librosa scikit-learn soundfile numpy tkinterdnd2
     pause
     exit /b 1
 )

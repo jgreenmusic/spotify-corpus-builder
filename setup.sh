@@ -16,6 +16,7 @@ echo " 3. librosa         Audio analysis (AI features)"
 echo " 4. scikit-learn    Machine learning (clustering)"
 echo " 5. soundfile       WAV file reader"
 echo " 6. numpy           Numerical processing"
+echo " 7. tkinterdnd2     Drag and drop onto the window"
 echo
 echo "------------------------------------------------"
 echo " SYSTEM TOOL"
@@ -51,7 +52,7 @@ echo
 echo "[OK] $(python3 --version)"
 
 # ── Install packages ─────────────────────────────────────────────────────────
-PACKAGES="yt-dlp customtkinter librosa scikit-learn soundfile numpy"
+PACKAGES="yt-dlp customtkinter librosa scikit-learn soundfile numpy tkinterdnd2"
 
 echo
 echo "Installing Python packages..."
@@ -91,7 +92,7 @@ if [ $STATUS -ne 0 ]; then
         echo "ERROR: Installation failed. Try manually:"
         echo "  python3 -m venv .venv"
         echo "  source .venv/bin/activate"
-        echo "  pip install yt-dlp customtkinter librosa scikit-learn soundfile numpy"
+        echo "  pip install yt-dlp customtkinter librosa scikit-learn soundfile numpy tkinterdnd2"
         exit 1
     fi
 else

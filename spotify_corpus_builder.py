@@ -6,6 +6,7 @@ slices each clip to a short grain for use as a corpus.
 
 Prerequisites:
     pip install yt-dlp customtkinter
+    Optional: pip install tkinterdnd2   (drag and drop onto the window)
     ffmpeg on PATH:
       Windows: winget install ffmpeg
       Mac:     brew install ffmpeg
@@ -64,6 +65,7 @@ _TRACK_COLS    = ["Track Name", "track_name", "Song Name", "song_name", "Title",
 _ARTIST_COLS   = ["Artist Name(s)", "Artist Name", "artist_name", "artists", "Artist", "artist"]
 _URI_COLS      = ["Track URI", "track_uri", "uri", "spotify_uri"]
 _DURATION_COLS = ["Duration (ms)", "duration_ms", "Track Duration (ms)"]
+_YOUTUBE_COLS  = ["YouTube URL", "youtube_url"]
 
 # Extra Exportify columns kept in metadata.json. Spotify measured these on the
 # full studio track, so they are more reliable than anything estimated from a clip.
@@ -76,7 +78,7 @@ _SPOTIFY_NUM_COLS  = {"Popularity": "popularity", "Danceability": "danceability"
                       "Valence": "valence", "Tempo": "tempo", "Time Signature": "time_signature"}
 _PITCH_CLASSES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
 
-AUDIO_EXTS = (".wav",)
+AUDIO_EXTS = (".wav", ".aif", ".aiff", ".flac", ".mp3", ".m4a", ".ogg", ".opus")
 
 
 def sanitize(name: str) -> str:
@@ -85,6 +87,8 @@ def sanitize(name: str) -> str:
 
 def track_filename(track: dict) -> str:
     """File stem used for a track's preview, grain and metadata entry."""
+    if not track.get("artist"):
+        return sanitize(track["name"])
     return sanitize(f"{track['artist']} - {track['name']}")
 
 
@@ -119,6 +123,14 @@ def audio_duration(path: str):
         with wave.open(path) as w:
             return w.getnframes() / float(w.getframerate())
     except Exception:
+        pass
+    try:   # mp3/m4a and other formats soundfile can't read
+        probe = shutil.which("ffprobe")
+        out = subprocess.run([probe, "-v", "error", "-show_entries", "format=duration",
+                              "-of", "default=nw=1:nk=1", path],
+                             capture_output=True, text=True, timeout=30)
+        return float(out.stdout.strip())
+    except Exception:
         return None
 
 
@@ -148,15 +160,26 @@ def _spotify_fields(row: dict) -> dict:
 
 
 def read_tracks(csv_path: str) -> list:
-    """Parse a playlist CSV into track dicts. Rows without a name or artist are skipped."""
+    """Parse a playlist CSV (or a plain-text track list) into track dicts.
+
+    Rows without a track name are skipped. YouTube links in a text file are
+    kept as {"youtube_url": ...} placeholders; see expand_youtube_links().
+    """
+    if not csv_path.lower().endswith(".csv"):
+        with open(csv_path, encoding="utf-8-sig", errors="replace") as f:
+            tracks, urls = parse_track_lines(f.read())
+        return tracks + [{"artist": "", "name": u, "youtube_url": u, "_unexpanded": True} for u in urls]
     tracks = []
     with open(csv_path, newline="", encoding="utf-8-sig") as f:
         for row in csv.DictReader(f):
             name   = _find_col(row, _TRACK_COLS).strip()
             artist = _find_col(row, _ARTIST_COLS).strip()
-            if not (name and artist):
+            if not name:
                 continue
             track = {"artist": artist, "name": name}
+            youtube_url = _find_col(row, _YOUTUBE_COLS).strip()
+            if youtube_url:
+                track["youtube_url"] = youtube_url
             uri = _find_col(row, _URI_COLS).strip()
             if uri:
                 track["uri"] = uri
@@ -169,6 +192,90 @@ def read_tracks(csv_path: str) -> list:
                 track["spotify"] = spotify
             tracks.append(track)
     return tracks
+
+
+_YOUTUBE_LINK = re.compile(r"^https?://(www\.|m\.|music\.)?(youtube\.com|youtu\.be)/", re.I)
+_LINE_SEPARATORS = (" - ", " – ", " — ", "\t")
+
+
+def parse_track_lines(text: str) -> tuple:
+    """Parse pasted text: one "Artist - Title" per line (or tab-separated), or a
+    YouTube link. Lines starting with # are ignored. Returns (tracks, urls)."""
+    tracks, urls = [], []
+    for line in text.splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if _YOUTUBE_LINK.match(line):
+            urls.append(line)
+            continue
+        for sep in _LINE_SEPARATORS:
+            if sep in line:
+                artist, name = line.split(sep, 1)
+                if name.strip():
+                    tracks.append({"artist": artist.strip(), "name": name.strip()})
+                break
+        else:
+            tracks.append({"artist": "", "name": line})
+    return tracks, urls
+
+
+_TITLE_JUNK = re.compile(
+    r"\s*[\(\[](official\s*(music\s*)?(video|audio|visuali[sz]er|lyric video)|lyrics?( video)?|"
+    r"audio|visuali[sz]er|hd|hq|4k|m/?v)[\)\]]\s*", re.I)
+
+
+def _split_youtube_title(title: str, channel: str) -> tuple:
+    """Guess (artist, track name) from a YouTube title and channel."""
+    title = _TITLE_JUNK.sub(" ", title or "").strip()
+    channel = (channel or "").strip()
+    if channel.endswith(" - Topic"):          # auto-generated: title is the track name
+        return channel[:-8], title
+    for sep in _LINE_SEPARATORS[:3]:
+        if sep in title:
+            artist, name = title.split(sep, 1)
+            return artist.strip(), name.strip()
+    return channel, title
+
+
+def expand_youtube_links(urls: list) -> list:
+    """Turn YouTube video/playlist links into tracks that download from that exact video."""
+    tracks = []
+    opts = {"quiet": True, "no_warnings": True, "extract_flat": "in_playlist",
+            "logger": _QuietLogger()}
+    for url in urls:
+        try:
+            with yt_dlp.YoutubeDL(opts) as ydl:
+                info = ydl.extract_info(url, download=False) or {}
+        except Exception as e:
+            print(f"  Could not read {url}: {_short_error(e)}")
+            continue
+        entries = [e for e in (info.get("entries") or [info]) if e]
+        for e in entries:
+            if not e.get("id") and not e.get("url"):
+                continue
+            artist, name = _split_youtube_title(e.get("title"), e.get("channel") or e.get("uploader"))
+            if not name or name in ("[Private video]", "[Deleted video]"):
+                continue
+            track = {"artist": artist, "name": name,
+                     "youtube_url": e.get("webpage_url") or e.get("url")
+                                    or f"https://www.youtube.com/watch?v={e['id']}"}
+            if e.get("duration"):
+                track["duration_ms"] = int(float(e["duration"]) * 1000)
+            tracks.append(track)
+        print(f"  {url}: {len(entries)} video(s)")
+    return tracks
+
+
+def write_tracks_csv(path: str, tracks: list):
+    """Save a track list in the same column layout as an Exportify CSV."""
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+    with open(path, "w", newline="", encoding="utf-8") as f:
+        writer = csv.writer(f)
+        writer.writerow(["Track Name", "Artist Name(s)", "Duration (ms)", "YouTube URL"])
+        for t in tracks:
+            writer.writerow([t["name"], t.get("artist", ""), t.get("duration_ms", ""),
+                             t.get("youtube_url", "")])
 
 
 def _list_audio(folder: str) -> list:
@@ -253,16 +360,22 @@ def download_track(track: dict, wav_path: str, preview_length: int,
     Returns (ok, error_message, info). info describes the chosen video.
     """
     primary_artist = track["artist"].split(";")[0].strip()
-    query = f"{primary_artist} - {track['name']}"
+    query = f"{primary_artist} - {track['name']}" if primary_artist else track["name"]
     tmp_base = wav_path[:-4] + "_tmp"
     info = {}
 
     try:
-        candidates = _search_youtube(query, 5 if match_versions else 1)
-        if not candidates:
-            return False, "no YouTube results", info
-        scored = [(score_candidate(e, track), i, e) for i, e in enumerate(candidates)]
-        (score, flags), _, best = max(scored, key=lambda s: (s[0][0], -s[1]))
+        if track.get("youtube_url"):     # a specific video was given; don't search
+            duration = (track.get("duration_ms") or 0) / 1000.0 or None
+            best, flags = {"url": track["youtube_url"], "title": track["name"],
+                           "duration": duration}, []
+            match_versions = False
+        else:
+            candidates = _search_youtube(query, 5 if match_versions else 1)
+            if not candidates:
+                return False, "no YouTube results", info
+            scored = [(score_candidate(e, track), i, e) for i, e in enumerate(candidates)]
+            (_, flags), _, best = max(scored, key=lambda s: (s[0][0], -s[1]))
         url = best.get("url") or best.get("webpage_url") or f"https://www.youtube.com/watch?v={best['id']}"
         start = _download_start(track, best, preview_length, from_middle)
         info = {"youtube_url": url, "youtube_title": best.get("title"),
@@ -270,6 +383,7 @@ def download_track(track: dict, wav_path: str, preview_length: int,
                 "download_start": start}
         if match_versions:
             info["version_flag"] = ", ".join(flags) if flags else "ok"
+        info = {k: v for k, v in info.items() if v is not None}
 
         ydl_opts = {
             "format": "bestaudio/best",
@@ -366,7 +480,7 @@ def run_download(tracks: list, previews_dir: str, preview_length: int,
                 downloaded += 1
                 fails_in_a_row = 0
             else:
-                print(f"  [{n}/{total}] [failed]  {track['artist']} - {track['name']}  ({err})")
+                print(f"  [{n}/{total}] [failed]  {filename}  ({err})")
                 failed += 1
                 fails_in_a_row += 1
                 if fails_in_a_row >= 5 and not hinted:
@@ -556,7 +670,11 @@ def analyze_file(wav_path: str, features: bool = False, grain_duration: float = 
     """Load a file once and compute everything requested from the same frames."""
     import librosa
     import numpy as np
-    y, sr = librosa.load(wav_path, sr=_ANALYSIS_SR, mono=True)
+    import warnings
+    with warnings.catch_warnings():
+        # mp3/m4a fall back from soundfile to audioread, which librosa warns about
+        warnings.simplefilter("ignore")
+        y, sr = librosa.load(wav_path, sr=_ANALYSIS_SR, mono=True)
     if len(y) == 0:
         return {}
     rms      = librosa.feature.rms(y=y, hop_length=_HOP)[0]
@@ -683,7 +801,7 @@ def _grain_features(path: str):
     """Timbre summary of a grain: MFCC means/stds plus brightness, loudness, noisiness."""
     import librosa
     import numpy as np
-    y, sr = librosa.load(path, sr=_ANALYSIS_SR, mono=True)
+    y, sr = librosa.load(path, sr=_ANALYSIS_SR, mono=True)   # grains are always WAV
     if len(y) < _HOP:
         return None
     mfcc = librosa.feature.mfcc(y=y, sr=sr, n_mfcc=13, hop_length=_HOP)
@@ -817,6 +935,11 @@ def run_pipeline(output_root: str, tracks: list = None, audio_folder: str = "",
         print("Randomize cut is on, so smart grain selection is skipped for this run.")
         ai_opts["smart_grain"] = False
 
+    links = [t["youtube_url"] for t in tracks if t.get("_unexpanded")]
+    if links and not audio_folder:
+        print(f"Reading {len(links)} YouTube link(s)…")
+        tracks = [t for t in tracks if not t.get("_unexpanded")] + expand_youtube_links(links)
+
     metadata = load_metadata(output_root)
 
     if audio_folder:
@@ -892,13 +1015,21 @@ TRANSLATIONS = {
         "files_section": "FILES",
         "language_label": "Language",
         "theme_label": "Theme",
-        "csv_label": "CSV file",
-        "csv_hint": "CSV must have 'Track Name' and 'Artist Name(s)' columns. Export any Spotify playlist free at exportify.net",
+        "csv_label": "Track list",
+        "csv_hint": "A Spotify playlist exported from exportify.net (free), or a text file with one “Artist - Title” per line.",
         "csv_error_cols": "No tracks found. Make sure your CSV has 'Track Name' and 'Artist Name(s)' columns.\nExport from Spotify using exportify.net (free, no install needed).",
         "save_label": "Save to",
         "browse_btn": "Browse",
         "audio_label": "Audio folder",
-        "audio_hint": "Optional: use existing WAV files instead of downloading. Leave empty to download from the CSV.",
+        "audio_hint": "Optional: use existing audio files (WAV, AIFF, FLAC, MP3…) instead of downloading. Leave empty to download from the track list.",
+        "paste_btn": "Paste…",
+        "paste_title": "Paste a track list",
+        "paste_hint": "One track per line as “Artist - Title”. YouTube video and playlist links work too; their videos are used directly.",
+        "load_btn": "Load tracks",
+        "cancel_btn": "Cancel",
+        "drop_hint": "Tip: you can also drag a CSV, a text file or a folder of audio onto this window.",
+        "youtube_reading": "Reading {n} YouTube link(s)…",
+        "import_empty": "No tracks found in that list.",
         "tracks_section": "TRACKS",
         "search_placeholder": "Search artist or track…",
         "no_csv_msg": "No CSV loaded",
@@ -1153,6 +1284,11 @@ class CorpusBuilderUI:
             self._vars["output"].set(os.path.join(APP_DIR, "output"))
         self._vars["audio_folder"].trace_add("write", lambda *_: self._update_start_state())
 
+        self._dnd_ok = bool(getattr(root, "TkdndVersion", None))
+        if self._dnd_ok:
+            root.drop_target_register("DND_Files")
+            root.dnd_bind("<<Drop>>", self._on_drop)
+
         root.minsize(980, 640)
         root.geometry("1180x800")
         root.protocol("WM_DELETE_WINDOW", self._on_close)
@@ -1268,13 +1404,14 @@ class CorpusBuilderUI:
         card = self._card(parent, 1)
         card.grid_columnconfigure(1, weight=1)
 
+        csv_hint = T["csv_hint"] + ("\n" + T["drop_hint"] if self._dnd_ok else "")
         rows = [
-            (T["csv_label"],   self._vars["csv_path"],     self._browse_csv,          T["csv_hint"],   False),
-            (T["save_label"],  self._vars["output"],       self._browse_output,       None,            False),
-            (T["audio_label"], self._vars["audio_folder"], self._browse_audio_folder, T["audio_hint"], True),
+            (T["csv_label"],   self._vars["csv_path"],     self._browse_csv,          csv_hint,        "paste"),
+            (T["save_label"],  self._vars["output"],       self._browse_output,       None,            None),
+            (T["audio_label"], self._vars["audio_folder"], self._browse_audio_folder, T["audio_hint"], "clear"),
         ]
         r = 0
-        for label, var, browse, hint, clearable in rows:
+        for label, var, browse, hint, extra in rows:
             top = 14 if r == 0 else 6
             ctk.CTkLabel(card, text=label, font=self._fonts["body"], anchor="w"
                          ).grid(row=r, column=0, padx=(16, 10), pady=(top, 0), sticky="w")
@@ -1284,12 +1421,18 @@ class CorpusBuilderUI:
             ctk.CTkButton(card, text=T["browse_btn"], width=92, height=32,
                           font=self._fonts["body"], command=browse
                           ).grid(row=r, column=2, padx=(8, 0), pady=(top, 0))
-            if clearable:
+            if extra == "paste":
+                ctk.CTkButton(card, text=T["paste_btn"], width=80, height=32,
+                              font=self._fonts["body"], command=self._open_paste_dialog,
+                              fg_color="transparent", border_width=1,
+                              text_color=("gray10", "gray90")
+                              ).grid(row=r, column=3, padx=(4, 0), pady=(top, 0), sticky="w")
+            elif extra == "clear":
                 ctk.CTkButton(card, text="✕", width=32, height=32,
                               fg_color=("gray75", "gray30"), hover_color=("gray65", "gray40"),
                               text_color=("gray10", "gray90"),
                               command=lambda v=var: v.set("")
-                              ).grid(row=r, column=3, padx=(4, 0), pady=(top, 0))
+                              ).grid(row=r, column=3, padx=(4, 0), pady=(top, 0), sticky="w")
             r += 1
             if hint:
                 self._hint(card, hint).grid(row=r, column=1, columnspan=3, sticky="ew",
@@ -1555,12 +1698,91 @@ class CorpusBuilderUI:
     def _browse_csv(self):
         from tkinter import filedialog
         path = filedialog.askopenfilename(
-            title="Select Spotify CSV",
-            filetypes=[("CSV files", "*.csv"), ("All files", "*.*")],
+            title="Select a track list",
+            filetypes=[("Track lists", "*.csv *.txt"), ("All files", "*.*")],
         )
         if path:
+            self._open_track_file(path)
+
+    def _open_track_file(self, path: str):
+        if path.lower().endswith(".csv"):
             self._vars["csv_path"].set(path)
             self._load_csv(path)
+            return
+        try:
+            with open(path, encoding="utf-8-sig", errors="replace") as f:
+                text = f.read()
+        except OSError as e:
+            self._log_write(str(e))
+            return
+        self._import_text(text, os.path.splitext(os.path.basename(path))[0])
+
+    def _on_drop(self, event):
+        for path in self.root.tk.splitlist(event.data):
+            if os.path.isdir(path):
+                self._vars["audio_folder"].set(path)
+            elif path.lower().endswith((".csv", ".txt")):
+                self._open_track_file(path)
+            elif path.lower().endswith(AUDIO_EXTS):
+                self._vars["audio_folder"].set(os.path.dirname(path))
+        return event.action
+
+    def _open_paste_dialog(self):
+        ctk = self.ctk
+        T = self._T()
+        win = ctk.CTkToplevel(self.root)
+        win.title(T["paste_title"])
+        win.geometry("560x440")
+        win.transient(self.root)
+        win.grid_columnconfigure(0, weight=1)
+        win.grid_rowconfigure(1, weight=1)
+        self._hint(win, T["paste_hint"]).grid(row=0, column=0, sticky="ew", padx=16, pady=(14, 8))
+        box = ctk.CTkTextbox(win, font=self._fonts["body"])
+        box.grid(row=1, column=0, sticky="nsew", padx=16)
+        box.insert("1.0", "Aphex Twin - Xtal\nBoards of Canada - Roygbiv\n")
+        buttons = ctk.CTkFrame(win, fg_color="transparent")
+        buttons.grid(row=2, column=0, sticky="e", padx=16, pady=14)
+
+        def load():
+            text = box.get("1.0", "end")
+            win.destroy()
+            self._import_text(text, "pasted")
+
+        ctk.CTkButton(buttons, text=T["cancel_btn"], width=90, command=win.destroy,
+                      fg_color="transparent", border_width=1,
+                      text_color=("gray10", "gray90")).pack(side="left", padx=(0, 8))
+        ctk.CTkButton(buttons, text=T["load_btn"], width=110, command=load).pack(side="left")
+        win.after(100, lambda: (win.lift(), box.focus_set(), box.tag_add("sel", "1.0", "end")))
+
+    def _import_text(self, text: str, name: str):
+        """Load pasted text or a .txt list. YouTube links are read in the
+        background; the result is saved as a CSV so it is remembered like any other."""
+        T = self._T()
+        tracks, urls = parse_track_lines(text)
+
+        def finish(all_tracks):
+            if not all_tracks:
+                self._log_write(T["import_empty"])
+                self._tabs.set(self._tab_log)
+                return
+            stamp = time.strftime("%Y%m%d-%H%M%S")
+            path = os.path.join(APP_DIR, "track lists", f"{sanitize(name)}-{stamp}.csv")
+            write_tracks_csv(path, all_tracks)
+            self._log_write(f"Saved {len(all_tracks)} tracks to {path}")
+            self._vars["csv_path"].set(path)
+            self._load_csv(path)
+
+        if not urls:
+            finish(tracks)
+            return
+        self._log_write(T["youtube_reading"].format(n=len(urls)))
+        self._tabs.set(self._tab_log)
+
+        def work():
+            with _PrintRedirector(self._log_queue):
+                found = expand_youtube_links(urls)
+            self.root.after(0, lambda: finish(tracks + found))
+        threading.Thread(target=work, daemon=True).start()
 
     def _browse_output(self):
         from tkinter import filedialog
@@ -1776,6 +1998,25 @@ class CorpusBuilderUI:
 
 # ── Entry point ───────────────────────────────────────────────────────────────
 
+def _make_root():
+    """A CTk window with drag and drop if the optional tkinterdnd2 package is installed."""
+    import customtkinter as ctk
+    try:
+        from tkinterdnd2 import TkinterDnD
+    except ImportError:
+        return ctk.CTk()
+
+    class DnDRoot(ctk.CTk, TkinterDnD.DnDWrapper):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            try:
+                self.TkdndVersion = TkinterDnD._require(self)
+            except Exception:
+                self.TkdndVersion = None
+
+    return DnDRoot()
+
+
 def main():
     if len(sys.argv) == 1:
         try:
@@ -1785,14 +2026,17 @@ def main():
             sys.exit(1)
 
         apply_startup_theme()
-        root = ctk.CTk()
+        root = _make_root()
         CorpusBuilderUI(root)
         root.mainloop()
         return
 
     parser = argparse.ArgumentParser(
         description="Download Spotify preview clips and slice them into short grains.")
-    parser.add_argument("--csv",            default=os.path.join(APP_DIR, "Liked_Songs.csv"))
+    parser.add_argument("--csv",            default=os.path.join(APP_DIR, "Liked_Songs.csv"),
+                        help="Exportify CSV, or a .txt file with one 'Artist - Title' or YouTube link per line")
+    parser.add_argument("--youtube",        action="append", default=[], metavar="URL",
+                        help="YouTube video or playlist link (can be repeated; used instead of --csv)")
     parser.add_argument("--output",         default=os.path.join(APP_DIR, "output"))
     parser.add_argument("--audio-folder",   default="",
                         help="Use existing audio files from this folder instead of downloading")
@@ -1827,7 +2071,9 @@ def main():
         random.seed(args.seed)
 
     tracks = []
-    if not args.audio_folder:
+    if args.youtube:
+        tracks = [{"artist": "", "name": u, "youtube_url": u, "_unexpanded": True} for u in args.youtube]
+    elif not args.audio_folder:
         if not os.path.exists(args.csv):
             print(f"ERROR: CSV not found at {args.csv}")
             sys.exit(1)

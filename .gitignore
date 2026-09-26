@@ -5,3 +5,4 @@ output/
 build/
 dist/
 *.spec
+track lists/

@@ -8,7 +8,7 @@ A desktop tool for downloading audio previews from any Spotify playlist CSV and 
 
 <!-- Write 2–3 sentences here describing what you use this for and why you built it. Example: "I built this for my PhD work at the University of Oregon to quickly assemble large audio corpora from Spotify playlists without manually downloading and editing hundreds of files." -->
 
-- Loads any Spotify playlist exported as a CSV
+- Loads any Spotify playlist exported as a CSV, a pasted or text-file list of "Artist - Title" lines, or YouTube video/playlist links
 - Searches YouTube for each track, picks the result that best matches the song (length, title, official "Topic" uploads), and downloads N seconds of it
 - Slices each download into a short audio grain at a configurable offset and length
 - Optionally picks a random subset of tracks from a large CSV
@@ -32,7 +32,7 @@ A desktop tool for downloading audio previews from any Spotify playlist CSV and 
   - Windows: `winget install ffmpeg`
   - Mac: `brew install ffmpeg` (setup.sh will attempt this automatically)
 
-All Python dependencies (yt-dlp, customtkinter, librosa, scikit-learn, soundfile, numpy) are installed by the setup script.
+All Python dependencies (yt-dlp, customtkinter, librosa, scikit-learn, soundfile, numpy, tkinterdnd2) are installed by the setup script.
 
 ---
 
@@ -75,6 +75,8 @@ Everything the app does is also available from the command line:
 ```
 python3 spotify_corpus_builder.py --csv my_songs.csv --sample 50 --seed 7 --randomize-cut 0.5 2.0
 python3 spotify_corpus_builder.py --audio-folder ~/my_wavs --smart-grain --features --cluster
+python3 spotify_corpus_builder.py --youtube "https://www.youtube.com/playlist?list=..." --download-from middle
+python3 spotify_corpus_builder.py --csv my_list.txt
 python3 spotify_corpus_builder.py --help
 ```
 
@@ -84,6 +86,13 @@ python3 spotify_corpus_builder.py --help
 2. Log in with Spotify
 3. Click Export next to any playlist or Liked Songs
 4. Load the saved CSV in the app with the Browse button
+
+### Other ways to add tracks
+
+- **Paste…** (next to Browse) — type or paste one `Artist - Title` per line. YouTube video and playlist links work too; those exact videos are downloaded instead of searching. The list is saved as a CSV in `track lists/` so it's remembered.
+- **Text file** — Browse or drop a `.txt` file with the same format.
+- **Drag and drop** — drop a CSV, a text file or a folder of audio onto the window (needs `tkinterdnd2`, installed by the setup script).
+- **Audio folder** — WAV, AIFF, FLAC, MP3, M4A, OGG and Opus files are all accepted. Grains always come out as 44.1 kHz stereo WAV.
 
 ---
 

@@ -25,7 +25,7 @@ jobs:
           python-version: "3.11"
 
       - name: Install dependencies
-        run: pip install pyinstaller yt-dlp customtkinter
+        run: pip install pyinstaller yt-dlp customtkinter tkinterdnd2 soundfile numpy
 
       # customtkinter ships theme/font files that PyInstaller does not find on its own.
       # ffmpeg is not bundled; the app tells the user how to install it if missing.
@@ -33,6 +33,7 @@ jobs:
         run: >
           pyinstaller --onefile --name spotify_corpus_builder
           --collect-data customtkinter
+          --collect-all tkinterdnd2
           --add-data "translations.json:."
           --add-data "themes:themes"
           spotify_corpus_builder.py
