@@ -90,6 +90,7 @@ python3 spotify_corpus_builder.py --help
 | Setting | What it does |
 |---|---|
 | Download length | How many seconds to download from YouTube per track (default 30s) |
+| Parallel downloads | How many tracks to download at the same time (default 3, max 8). Higher is faster, but YouTube may start refusing requests |
 | Download from ⅓ in | Start the download about a third of the way into the song instead of at the beginning, to skip intros |
 | Start cut at | Where in the preview to begin the grain (default 5s in) |
 | Cut length | How long each grain is (default 1.5s) |

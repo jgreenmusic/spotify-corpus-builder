@@ -35,6 +35,8 @@ import shutil
 import subprocess
 import sys
 import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from functools import lru_cache
 
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -85,9 +87,11 @@ def track_filename(track: dict) -> str:
     return sanitize(f"{track['artist']} - {track['name']}")
 
 
+@lru_cache(maxsize=1)
 def ffmpeg_bin() -> str:
-    if shutil.which("ffmpeg"):
-        return "ffmpeg"
+    found = shutil.which("ffmpeg")
+    if found:
+        return found
     for candidate in [
         "/opt/homebrew/bin/ffmpeg",
         "/usr/local/bin/ffmpeg",
@@ -273,6 +277,7 @@ def download_track(track: dict, wav_path: str, preview_length: int,
             "no_warnings": True,
             "noprogress": True,
             "logger": _QuietLogger(),
+            "ffmpeg_location": ffmpeg_bin(),
             "download_ranges": yt_dlp.utils.download_range_func([], [[start, start + preview_length]]),
             "force_keyframes_at_cuts": True,
             "postprocessors": [{"key": "FFmpegExtractAudio", "preferredcodec": "wav"}],
@@ -300,52 +305,76 @@ def download_track(track: dict, wav_path: str, preview_length: int,
 
 def run_download(tracks: list, previews_dir: str, preview_length: int,
                  stop_event: threading.Event = None, metadata: dict = None,
-                 match_versions: bool = True, from_middle: bool = False):
+                 match_versions: bool = True, from_middle: bool = False,
+                 workers: int = 3, progress=None):
     os.makedirs(previews_dir, exist_ok=True)
     stop_event = stop_event or threading.Event()
     metadata = metadata if metadata is not None else {}
+    workers = max(1, int(workers))
+
+    todo, seen, skipped = [], set(), 0
+    for track in tracks:
+        filename = track_filename(track)
+        if filename in seen:
+            continue
+        seen.add(filename)
+        if os.path.exists(os.path.join(previews_dir, filename + ".wav")):
+            skipped += 1
+        else:
+            todo.append(track)
 
     where = "from ~1/3 into each song" if from_middle else "from the start"
-    print(f"\n=== DOWNLOAD ({len(tracks)} tracks -> {preview_length}s previews, {where}) ===")
+    print(f"\n=== DOWNLOAD ({len(todo)} to fetch, {skipped} already downloaded -> "
+          f"{preview_length}s previews, {where}, {workers} at a time) ===")
     print(f"Output: {previews_dir}\n")
-    downloaded = skipped = failed = flagged = 0
+    downloaded = failed = flagged = 0
     fails_in_a_row = 0
     hinted = False
 
-    for i, track in enumerate(tracks, 1):
+    def job(track):
         if stop_event.is_set():
-            print("\nStopped by user.")
-            break
-        filename = track_filename(track)
-        wav_path = os.path.join(previews_dir, filename + ".wav")
-        if os.path.exists(wav_path):
-            print(f"  [{i}/{len(tracks)}] [exists]  {filename}.wav")
-            skipped += 1
-            continue
-        print(f"  [{i}/{len(tracks)}] [fetch]   {track['artist']} - {track['name']}")
-        ok, err, info = download_track(track, wav_path, preview_length,
-                                       match_versions=match_versions, from_middle=from_middle)
-        if ok:
-            metadata.setdefault(filename, {}).update(info)
-            flag = info.get("version_flag", "ok")
-            if flag != "ok":
-                flagged += 1
-                print(f"  [{i}/{len(tracks)}] [check]   {filename}.wav  — {flag}  "
-                      f"(got: {info.get('youtube_title')})")
-            else:
-                print(f"  [{i}/{len(tracks)}] [done]    {filename}.wav")
-            downloaded += 1
-            fails_in_a_row = 0
-        else:
-            print(f"  [{i}/{len(tracks)}] [failed]  {track['artist']} - {track['name']}  ({err})")
-            failed += 1
-            fails_in_a_row += 1
-            if fails_in_a_row >= 5 and not hinted:
-                print("  Several downloads in a row have failed. YouTube may have changed something;\n"
-                      "  try updating yt-dlp:   python -m pip install -U yt-dlp")
-                hinted = True
-        stop_event.wait(1)  # be polite to YouTube, but stay responsive to Stop
+            return track, None
+        wav_path = os.path.join(previews_dir, track_filename(track) + ".wav")
+        result = download_track(track, wav_path, preview_length,
+                                match_versions=match_versions, from_middle=from_middle)
+        stop_event.wait(0.5)  # small pause per worker so YouTube isn't hammered
+        return track, result
 
+    total = len(todo)
+    if progress:
+        progress("download", 0, total)
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        futures = [pool.submit(job, t) for t in todo]
+        for n, fut in enumerate(as_completed(futures), 1):
+            track, result = fut.result()
+            if progress:
+                progress("download", n, total)
+            if result is None:          # skipped because Stop was pressed
+                continue
+            ok, err, info = result
+            filename = track_filename(track)
+            if ok:
+                metadata.setdefault(filename, {}).update(info)
+                flag = info.get("version_flag", "ok")
+                if flag != "ok":
+                    flagged += 1
+                    print(f"  [{n}/{total}] [check]   {filename}.wav  — {flag}  "
+                          f"(got: {info.get('youtube_title')})")
+                else:
+                    print(f"  [{n}/{total}] [done]    {filename}.wav")
+                downloaded += 1
+                fails_in_a_row = 0
+            else:
+                print(f"  [{n}/{total}] [failed]  {track['artist']} - {track['name']}  ({err})")
+                failed += 1
+                fails_in_a_row += 1
+                if fails_in_a_row >= 5 and not hinted:
+                    print("  Several downloads in a row have failed. YouTube may have changed something;\n"
+                          "  try updating yt-dlp:   python -m pip install -U yt-dlp")
+                    hinted = True
+
+    if stop_event.is_set():
+        print("\nStopped by user.")
     print(f"\nDownload complete - downloaded: {downloaded}  skipped: {skipped}  failed: {failed}")
     if flagged:
         print(f"{flagged} downloads may be the wrong version — see [check] lines above, "
@@ -354,9 +383,44 @@ def run_download(tracks: list, previews_dir: str, preview_length: int,
 
 # ── Step 2: Slice ─────────────────────────────────────────────────────────────
 
-def slice_preview(src: str, dst: str, offset: float, duration: float, ffmpeg: str,
+def _slice_with_soundfile(src: str, dst: str, offset: float, duration: float,
+                          fade_ms: float):
+    """Cut a grain in-process. Returns None if the file needs ffmpeg instead
+    (soundfile missing, or not 44.1 kHz mono/stereo, which ffmpeg converts)."""
+    try:
+        import numpy as np
+        import soundfile as sf
+        info = sf.info(src)
+    except Exception:
+        return None
+    if info.samplerate != 44100 or info.channels not in (1, 2):
+        return None
+    sr = info.samplerate
+    data, _ = sf.read(src, start=int(round(offset * sr)), frames=int(round(duration * sr)),
+                      dtype="float32", always_2d=True)
+    if len(data) == 0:
+        return False
+    if data.shape[1] == 1:
+        data = np.repeat(data, 2, axis=1)
+    fade = min(int(fade_ms / 1000.0 * sr), len(data) // 4)
+    if fade > 0:
+        ramp = np.linspace(0.0, 1.0, fade, dtype=np.float32)[:, None]
+        data[:fade] *= ramp
+        data[-fade:] *= ramp[::-1]
+    sf.write(dst, data, sr, subtype="PCM_16")
+    return True
+
+
+def slice_preview(src: str, dst: str, offset: float, duration: float,
                   fade_ms: float = 5.0) -> bool:
-    cmd = [ffmpeg, "-y", "-ss", f"{offset:.3f}", "-t", f"{duration:.3f}", "-i", src]
+    try:
+        ok = _slice_with_soundfile(src, dst, offset, duration, fade_ms)
+        if ok is not None:
+            return ok
+    except Exception:
+        pass    # unreadable by soundfile; let ffmpeg try
+
+    cmd = [ffmpeg_bin(), "-y", "-ss", f"{offset:.3f}", "-t", f"{duration:.3f}", "-i", src]
     fade = min(fade_ms / 1000.0, duration / 4)
     if fade > 0:
         cmd += ["-af", f"afade=t=in:st=0:d={fade:.4f},"
@@ -373,9 +437,9 @@ def slice_preview(src: str, dst: str, offset: float, duration: float, ffmpeg: st
 def run_slice(previews_dir: str, grains_dir: str, files: list, offset: float, duration: float,
               stop_event: threading.Event = None, metadata: dict = None,
               use_smart: bool = False, randomize_cut: bool = False,
-              dur_min: float = 0.5, dur_max: float = 3.0, fade_ms: float = 5.0):
+              dur_min: float = 0.5, dur_max: float = 3.0, fade_ms: float = 5.0,
+              progress=None):
     os.makedirs(grains_dir, exist_ok=True)
-    ffmpeg = ffmpeg_bin()
     stop_event = stop_event or threading.Event()
     metadata = metadata if metadata is not None else {}
     total = len(files)
@@ -393,6 +457,8 @@ def run_slice(previews_dir: str, grains_dir: str, files: list, offset: float, du
         if stop_event.is_set():
             print("\nStopped by user.")
             break
+        if progress:
+            progress("slice", i, total)
         src = os.path.join(previews_dir, fname)
         dst = os.path.join(grains_dir, _stem(fname) + ".wav")
         if os.path.exists(dst):
@@ -420,7 +486,7 @@ def run_slice(previews_dir: str, grains_dir: str, files: list, offset: float, du
             cut_off = max(0.0, length - cut_dur)
             print(f"  [{i}/{total}] [note]    file is only {length:.1f}s — cut moved to {cut_off:.2f}s")
 
-        if slice_preview(src, dst, cut_off, cut_dur, ffmpeg, fade_ms):
+        if slice_preview(src, dst, cut_off, cut_dur, fade_ms):
             print(f"  [{i}/{total}] [sliced]  {fname}  @ {cut_off:.2f}s, {cut_dur:.2f}s")
             metadata.setdefault(key, {})["grain"] = {
                 "offset": round(cut_off, 3), "duration": round(cut_dur, 3)}
@@ -582,7 +648,7 @@ def _run_ai_on_track(wav_path: str, key: str, ai_opts: dict, metadata: dict):
 
 
 def run_analysis(previews_dir: str, files: list, ai_opts: dict, metadata: dict,
-                 stop_event: threading.Event = None):
+                 stop_event: threading.Event = None, progress=None):
     """Analyse every file whose metadata is missing a requested result.
 
     Runs as its own pass so it works the same whether the audio was just
@@ -602,6 +668,8 @@ def run_analysis(previews_dir: str, files: list, ai_opts: dict, metadata: dict,
         if stop_event.is_set():
             print("\nStopped by user.")
             break
+        if progress:
+            progress("analyse", i, len(todo))
         print(f"  [{i}/{len(todo)}] {fname}")
         _run_ai_on_track(os.path.join(previews_dir, fname), _stem(fname), ai_opts, metadata)
 
@@ -723,12 +791,13 @@ def run_pipeline(output_root: str, tracks: list = None, audio_folder: str = "",
                  do_download: bool = True, do_slice: bool = True,
                  randomize_cut: bool = False, dur_min: float = 0.5, dur_max: float = 3.0,
                  fade_ms: float = 5.0, seed=None, match_versions: bool = True,
-                 from_middle: bool = False, ai_opts: dict = None,
-                 stop_event: threading.Event = None):
+                 from_middle: bool = False, workers: int = 3, ai_opts: dict = None,
+                 stop_event: threading.Event = None, progress=None):
     """Download -> analyse -> slice -> cluster. Shared by the GUI and the CLI.
 
     With an audio_folder, every audio file in it is used and nothing is downloaded.
     Otherwise only the given tracks are downloaded, analysed and sliced.
+    progress, if given, is called as progress(stage, done, total).
     """
     stop_event = stop_event or threading.Event()
     ai_opts = dict(ai_opts or {})
@@ -752,8 +821,10 @@ def run_pipeline(output_root: str, tracks: list = None, audio_folder: str = "",
     else:
         previews_dir = os.path.join(output_root, "previews")
         if do_download:
+            ffmpeg_bin()   # fail once with a clear message rather than on every track
             run_download(tracks, previews_dir, preview_length, stop_event, metadata=metadata,
-                         match_versions=match_versions, from_middle=from_middle)
+                         match_versions=match_versions, from_middle=from_middle,
+                         workers=workers, progress=progress)
         files, seen = [], set()
         for t in tracks:
             key = track_filename(t)
@@ -770,13 +841,13 @@ def run_pipeline(output_root: str, tracks: list = None, audio_folder: str = "",
         return
 
     if not stop_event.is_set():
-        run_analysis(previews_dir, files, ai_opts, metadata, stop_event)
+        run_analysis(previews_dir, files, ai_opts, metadata, stop_event, progress)
 
     if do_slice and not stop_event.is_set():
         run_slice(previews_dir, grains_dir, files, offset, duration, stop_event,
                   metadata=metadata, use_smart=bool(ai_opts.get("smart_grain")),
                   randomize_cut=randomize_cut, dur_min=dur_min, dur_max=dur_max,
-                  fade_ms=fade_ms)
+                  fade_ms=fade_ms, progress=progress)
 
     if not stop_event.is_set() and ai_opts.get("cluster") and os.path.isdir(grains_dir):
         clusters = cluster_corpus(grains_dir)
@@ -843,6 +914,7 @@ TRANSLATIONS = {
         "ai_requires_note":      "Smart analysis requires librosa. Run setup.bat or setup.sh to install it.",
         "start_btn": "Start", "stop_btn": "Stop",
         "log_section": "LOG",
+        "workers_label": "Parallel downloads",
     },
     "Espanol": {
         "window_title": "Constructor de Corpus de Spotify",
@@ -1103,7 +1175,8 @@ class CorpusBuilderUI:
         self._poll_log()
 
     def _T(self) -> dict:
-        return TRANSLATIONS.get(self._lang, TRANSLATIONS["English"])
+        # Fall back to English for any key a translation is missing.
+        return {**TRANSLATIONS["English"], **TRANSLATIONS.get(self._lang, {})}
 
     # ── Build ─────────────────────────────────────────────────────────────────
 
@@ -1310,6 +1383,7 @@ class CorpusBuilderUI:
         self._prev_len_var = _tk2.StringVar(value="30")
         self._offset_var   = _tk2.StringVar(value="5.0")
         self._duration_var = _tk2.StringVar(value="1.5")
+        self._workers_var  = _tk2.StringVar(value="3")
         self._do_download  = _tk2.BooleanVar(value=True)
         self._do_slice     = _tk2.BooleanVar(value=True)
 
@@ -1329,7 +1403,8 @@ class CorpusBuilderUI:
         f1, self._dl_lbl  = _param(params_row, "dl_length_label", self._prev_len_var)
         f2, self._off_lbl = _param(params_row, "offset_label",    self._offset_var)
         f3, self._dur_lbl = _param(params_row, "duration_label",  self._duration_var)
-        for f in (f1, f2, f3):
+        f4, self._workers_lbl = _param(params_row, "workers_label", self._workers_var)
+        for f in (f1, f2, f3, f4):
             f.pack(side="left", padx=(0, 32))
 
         self._explain_lbl = ctk.CTkLabel(
@@ -1591,6 +1666,7 @@ class CorpusBuilderUI:
         self._dl_lbl.configure(text=T["dl_length_label"])
         self._off_lbl.configure(text=T["offset_label"])
         self._dur_lbl.configure(text=T["duration_label"])
+        self._workers_lbl.configure(text=T["workers_label"])
         self._explain_lbl.configure(text=T["explain_text"])
         self._step1_chk.configure(text=T["step1_check"])
         self._step2_chk.configure(text=T["step2_check"])
@@ -1719,6 +1795,7 @@ class CorpusBuilderUI:
             duration = float(self._duration_var.get())
             dur_min  = float(self._dur_min_var.get())
             dur_max  = float(self._dur_max_var.get())
+            workers  = max(1, min(8, int(self._workers_var.get())))
             if dur_min > dur_max:
                 dur_min, dur_max = dur_max, dur_min
         except ValueError:
@@ -1752,7 +1829,7 @@ class CorpusBuilderUI:
                     randomize_cut=self._randomize_cut_enabled.get(),
                     dur_min=dur_min, dur_max=dur_max,
                     match_versions=self._ai_detect_versions.get(),
-                    from_middle=self._from_middle.get(),
+                    from_middle=self._from_middle.get(), workers=workers,
                     ai_opts=ai_opts, stop_event=self._stop_event)
             except Exception as e:
                 print(f"ERROR: {e}")
@@ -1781,16 +1858,25 @@ class CorpusBuilderUI:
     def _log_write(self, msg: str):
         self._log_queue.put(msg)
 
+    _LOG_MAX_LINES = 5000
+
     def _poll_log(self):
+        # Drain everything queued since the last poll and insert it in one go.
+        lines = []
         try:
-            while True:
-                msg = self._log_queue.get_nowait()
-                self._log_area.configure(state="normal")
-                self._log_area.insert("end", msg + "\n")
-                self._log_area.see("end")
-                self._log_area.configure(state="disabled")
+            while len(lines) < 2000:
+                lines.append(self._log_queue.get_nowait())
         except queue.Empty:
             pass
+        if lines:
+            box = self._log_area
+            box.configure(state="normal")
+            box.insert("end", "\n".join(lines) + "\n")
+            excess = int(box.index("end-1c").split(".")[0]) - self._LOG_MAX_LINES
+            if excess > 0:
+                box.delete("1.0", f"{excess + 1}.0")
+            box.see("end")
+            box.configure(state="disabled")
         self.root.after(100, self._poll_log)
 
 
@@ -1829,6 +1915,8 @@ def main():
                         help="Random seed, so a random sample or random cuts can be reproduced")
     parser.add_argument("--download-from",  choices=["start", "middle"], default="start",
                         help="Download from the start of each song, or from about a third of the way in")
+    parser.add_argument("--workers",        type=int, default=3,
+                        help="How many tracks to download at the same time (default 3)")
     parser.add_argument("--first-result",   action="store_true",
                         help="Use the first YouTube result instead of picking the best match")
     parser.add_argument("--skip-download",  action="store_true")
@@ -1863,6 +1951,7 @@ def main():
             randomize_cut=bool(args.randomize_cut), dur_min=dur_min, dur_max=dur_max,
             fade_ms=args.fade_ms, seed=args.seed,
             match_versions=not args.first_result, from_middle=args.download_from == "middle",
+            workers=args.workers,
             ai_opts={"smart_grain": args.smart_grain, "grain_strategy": args.grain_strategy,
                      "extract_features": args.features, "cluster": args.cluster,
                      "clap": args.clap})
