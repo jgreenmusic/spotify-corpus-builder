@@ -64,6 +64,8 @@ python3 spotify_corpus_builder.py
 
 Or double-click the `.py` file on Windows.
 
+The window has your files and track list on the left (the Log tab next to Tracks opens automatically when you press Start), settings on the right, and a progress bar with the time remaining along the bottom. Everything you set, including the last CSV, is remembered for next time.
+
 In the track list you can search, and select rows (Ctrl/Cmd-click, Shift-click). When you press Start, only the selected tracks are used; if nothing is selected, only the tracks matching the search.
 
 ### Command line
@@ -96,10 +98,16 @@ python3 spotify_corpus_builder.py --help
 | Cut length | How long each grain is (default 1.5s) |
 | Random sample | Pick N tracks at random from the CSV instead of all of them |
 | Randomize cut per track | Each track gets a random grain length and start point within a range you set |
-| Randomize button | Scrambles all numeric settings and AI checkboxes at once |
+| Randomize button | Scrambles the main numeric settings, AI checkboxes and grain strategy at once |
 | Audio folder | Point to a folder of existing WAVs — skips download and analyses/slices those files directly |
 
 Each grain gets a 5 ms fade in and out so it doesn't click (`--fade-ms` on the command line; 0 turns it off). If a cut would run past the end of a file, it is moved back so the grain is always full length.
+
+---
+
+## Themes and Languages
+
+Pick a theme and language in the top-right corner. Themes are the JSON files in `themes/`; add your own by copying one and changing the colours and `_name`. Languages are in `translations.json` (English is built in); any text a translation leaves out is shown in English.
 
 ---
 
